@@ -5,7 +5,8 @@ options:
     iOS: "18.0"
 settings:
   base:
-    SWIFT_VERSION: 6.0
+    SWIFT_VERSION: 5.0
+    SWIFT_STRICT_CONCURRENCY: minimal
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
 targets:
@@ -30,4 +31,3 @@ targets:
     sources: [Tests]
     dependencies:
       - target: K7Bridge
-
