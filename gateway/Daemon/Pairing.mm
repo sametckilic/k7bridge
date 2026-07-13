@@ -2,6 +2,9 @@
 #import <sodium.h>
 
 static NSString *const K7PairingStatePath=@"/var/mobile/Library/K7Bridge/pairing-state.json";
+static NSData *K7DecodeBase64(id value) {
+    return [value isKindOfClass:NSString.class]?[[NSData alloc]initWithBase64EncodedString:value options:0]:nil;
+}
 
 @implementation K7Pairing {
     unsigned char _secret[crypto_kx_SECRETKEYBYTES];
@@ -30,10 +33,10 @@ static NSString *const K7PairingStatePath=@"/var/mobile/Library/K7Bridge/pairing
     NSData *data=[NSData dataWithContentsOfFile:K7PairingStatePath];
     NSDictionary *state=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
     if (![state isKindOfClass:NSDictionary.class]) return NO;
-    NSData *publicKey=[[NSData alloc]initWithBase64EncodedString:state[@"publicKey"] options:0];
-    NSData *secret=[[NSData alloc]initWithBase64EncodedString:state[@"secretKey"] options:0];
-    NSData *shared=[[NSData alloc]initWithBase64EncodedString:state[@"sharedKey"] options:0];
-    NSData *client=[[NSData alloc]initWithBase64EncodedString:state[@"clientPublicKey"] options:0];
+    NSData *publicKey=K7DecodeBase64(state[@"publicKey"]);
+    NSData *secret=K7DecodeBase64(state[@"secretKey"]);
+    NSData *shared=K7DecodeBase64(state[@"sharedKey"]);
+    NSData *client=K7DecodeBase64(state[@"clientPublicKey"]);
     BOOL consumed=[state[@"consumed"]boolValue];
     if (![state[@"gatewayID"]isKindOfClass:NSString.class] || ![state[@"oneTimeCode"]isKindOfClass:NSString.class] ||
         ![state[@"relaySecret"]isKindOfClass:NSString.class] || publicKey.length!=crypto_kx_PUBLICKEYBYTES) return NO;
