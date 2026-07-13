@@ -8,9 +8,14 @@ struct QRScannerView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: ScannerViewController, context: Context) {}
 }
 
+private final class CaptureSessionBox: @unchecked Sendable {
+    let session = AVCaptureSession()
+}
+
 final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMetadataOutputObjectsDelegate {
     var onCode: ((URL) -> Void)?
-    private let session = AVCaptureSession()
+    private let sessionBox = CaptureSessionBox()
+    private var session: AVCaptureSession { sessionBox.session }
     private var delivered = false
 
     override func viewDidLoad() {
@@ -19,7 +24,9 @@ final class ScannerViewController: UIViewController, @preconcurrency AVCaptureMe
         session.addInput(input); let output = AVCaptureMetadataOutput(); guard session.canAddOutput(output) else { return }
         session.addOutput(output); output.setMetadataObjectsDelegate(self, queue: .main); output.metadataObjectTypes = [.qr]
         let preview = AVCaptureVideoPreviewLayer(session: session); preview.videoGravity = .resizeAspectFill; preview.frame = view.bounds
-        view.layer.addSublayer(preview); DispatchQueue.global(qos: .userInitiated).async { self.session.startRunning() }
+        view.layer.addSublayer(preview)
+        let sessionBox = sessionBox
+        DispatchQueue.global(qos: .userInitiated).async { sessionBox.session.startRunning() }
     }
 
     override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); (view.layer.sublayers?.first as? AVCaptureVideoPreviewLayer)?.frame = view.bounds }
