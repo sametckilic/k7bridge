@@ -3,9 +3,23 @@
 #import <Security/Security.h>
 
 @interface K7ControlServer () @property(nonatomic,copy) K7ControlHandler handler; @end
-@implementation K7ControlServer { uint16_t _port; NSData *_pkcs12; NSString *_password; nw_listener_t _listener; NSMutableSet *_connections; dispatch_queue_t _queue; }
+@implementation K7ControlServer {
+    uint16_t _port;
+    uint64_t _outgoingSequence;
+    NSData *_pkcs12;
+    NSString *_password;
+    nw_listener_t _listener;
+    NSMutableSet *_connections;
+    NSMutableSet *_authenticatedConnections;
+    dispatch_queue_t _queue;
+}
 - (instancetype)initWithPort:(uint16_t)port PKCS12:(NSData *)pkcs12 password:(NSString *)password handler:(K7ControlHandler)handler {
-    if ((self=[super init])) { _port=port; _pkcs12=pkcs12; _password=[password copy]; _handler=[handler copy]; _connections=[NSMutableSet set]; _queue=dispatch_queue_create("com.k7bridge.control",DISPATCH_QUEUE_SERIAL); } return self;
+    if ((self=[super init])) {
+        _port=port; _pkcs12=pkcs12; _password=[password copy]; _handler=[handler copy];
+        _connections=[NSMutableSet set]; _authenticatedConnections=[NSMutableSet set];
+        _queue=dispatch_queue_create("com.k7bridge.control",DISPATCH_QUEUE_SERIAL);
+    }
+    return self;
 }
 - (BOOL)start:(NSError **)error {
     SecIdentityRef identity=[self identity:error]; if (!identity) return NO;
@@ -33,8 +47,8 @@
     __weak typeof(self) weakSelf=self; nw_connection_set_state_changed_handler(connection,^(nw_connection_state_t state,nw_error_t error){
         __strong typeof(weakSelf) strongSelf=weakSelf; if(!strongSelf)return;
         if(state==nw_connection_state_ready){NSLog(@"K7Bridge control connection ready");[strongSelf receive:connection];}
-        if(state==nw_connection_state_failed){NSLog(@"K7Bridge control connection failed: %d",error?nw_error_get_error_code(error):0);[strongSelf->_connections removeObject:connection];}
-        if(state==nw_connection_state_cancelled){NSLog(@"K7Bridge control connection cancelled");[strongSelf->_connections removeObject:connection];}
+        if(state==nw_connection_state_failed){NSLog(@"K7Bridge control connection failed: %d",error?nw_error_get_error_code(error):0);[strongSelf forget:connection];}
+        if(state==nw_connection_state_cancelled){NSLog(@"K7Bridge control connection cancelled");[strongSelf forget:connection];}
     });
     nw_connection_start(connection);
 }
@@ -43,11 +57,30 @@
     nw_connection_receive_message(connection,^(dispatch_data_t content,nw_content_context_t context,bool complete,nw_error_t error){
         if(error||!content){NSLog(@"K7Bridge control receive ended: %d",error?nw_error_get_error_code(error):0);nw_connection_cancel(connection);return;} const void *buffer=NULL; size_t length=0; dispatch_data_t mapped=dispatch_data_create_map(content,&buffer,&length);
         NSData *data=[NSData dataWithBytes:buffer length:length]; if(mapped) (void)mapped;
-        NSDictionary *request=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]; NSLog(@"K7Bridge received control message: %@",request[@"type"]?:@"invalid"); NSDictionary *reply=weakSelf.handler(request?:@{});
-        [weakSelf send:reply to:connection]; [weakSelf receive:connection];
+        id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        NSDictionary *request=[object isKindOfClass:NSDictionary.class]?object:@{};
+        NSLog(@"K7Bridge received control message: %@",request[@"type"]?:@"invalid");
+        NSDictionary *reply=weakSelf.handler(request?:@{});
+        if ([request[@"type"] isEqual:@"pair"] && [reply[@"type"] isEqual:@"pairResult"]) {
+            [weakSelf authenticate:connection];
+        }
+        [weakSelf sendDescriptor:reply to:connection];
+        [weakSelf receive:connection];
     });
 }
-- (void)send:(NSDictionary *)message to:(nw_connection_t)connection {
+- (NSDictionary *)envelopeForDescriptor:(NSDictionary *)descriptor {
+    NSString *type=[descriptor[@"type"] isKindOfClass:NSString.class]?descriptor[@"type"]:@"error";
+    NSDictionary *payload=[descriptor[@"payload"] isKindOfClass:NSDictionary.class]?descriptor[@"payload"]:@{};
+    NSISO8601DateFormatter *formatter=[NSISO8601DateFormatter new];
+    formatter.formatOptions=NSISO8601DateFormatWithInternetDateTime|NSISO8601DateFormatWithFractionalSeconds;
+    return @{@"v":@1,@"type":type,@"messageId":[NSUUID UUID].UUIDString,
+        @"sequence":@(++_outgoingSequence),@"sentAt":[formatter stringFromDate:[NSDate date]],
+        @"payload":payload,@"auth":[NSNull null]};
+}
+- (void)sendDescriptor:(NSDictionary *)descriptor to:(nw_connection_t)connection {
+    [self sendEnvelope:[self envelopeForDescriptor:descriptor] to:connection];
+}
+- (void)sendEnvelope:(NSDictionary *)message to:(nw_connection_t)connection {
     NSData *data=[NSJSONSerialization dataWithJSONObject:message?:@{} options:0 error:nil];
     dispatch_data_t content=dispatch_data_create(data.bytes,data.length,_queue,^{(void)data;});
     nw_content_context_t context=nw_content_context_create("k7bridge.websocket");
@@ -55,7 +88,26 @@
     nw_content_context_set_metadata_for_protocol(context,metadata);
     nw_connection_send(connection,content,context,true,^(nw_error_t error){if(error)NSLog(@"K7Bridge control send failed: %d",nw_error_get_error_code(error));});
 }
-- (void)broadcast:(NSDictionary *)message { dispatch_async(_queue,^{ for(id connection in self->_connections)[self send:message to:(nw_connection_t)connection]; }); }
+- (void)authenticate:(nw_connection_t)connection {
+    for (id other in [_authenticatedConnections copy]) {
+        if ((nw_connection_t)other != connection) nw_connection_cancel((nw_connection_t)other);
+    }
+    [_authenticatedConnections removeAllObjects];
+    [_authenticatedConnections addObject:connection];
+    NSLog(@"K7Bridge control connection authenticated");
+}
+- (void)forget:(nw_connection_t)connection {
+    [_authenticatedConnections removeObject:connection];
+    [_connections removeObject:connection];
+}
+- (void)broadcastType:(NSString *)type payload:(NSDictionary *)payload {
+    if (!type.length) return;
+    dispatch_async(_queue,^{
+        if (self->_authenticatedConnections.count==0) return;
+        NSDictionary *envelope=[self envelopeForDescriptor:@{@"type":type,@"payload":payload?:@{}}];
+        for(id connection in self->_authenticatedConnections) [self sendEnvelope:envelope to:(nw_connection_t)connection];
+    });
+}
 - (SecIdentityRef)identity:(NSError **)error {
     CFArrayRef imported=NULL; NSDictionary *options=@{(__bridge id)kSecImportExportPassphrase:_password};
     OSStatus status=SecPKCS12Import((__bridge CFDataRef)_pkcs12,(__bridge CFDictionaryRef)options,&imported);

@@ -3,7 +3,8 @@ param(
     [string]$DeviceHost = "192.168.1.154",
     [string]$DeviceUser = "mobile",
     [string]$Workflow = "gateway.yml",
-    [int]$WaitMinutes = 15
+    [int]$WaitMinutes = 15,
+    [switch]$ResetPairing
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +54,12 @@ $owner = $Matches.owner
 $repo = $Matches.repo
 $branch = (& $git branch --show-current).Trim()
 if (-not $branch) { $branch = "main" }
+$head = (& $git rev-parse HEAD).Trim()
+$changes = & $git status --porcelain
+if ($changes) { throw "Çalışma klasöründe commit edilmemiş değişiklik var. Önce commit ve push yapın." }
+$remoteLine = (& $git ls-remote origin "refs/heads/$branch" | Select-Object -First 1)
+$remoteHead = if ($remoteLine) { ($remoteLine -split "\s+")[0] } else { "" }
+if ($remoteHead -ne $head) { throw "Yerel commit GitHub'daki $branch dalıyla aynı değil. Önce git push yapın." }
 $token = Read-GitHubCredential $git
 $api = "https://api.github.com/repos/$owner/$repo"
 $deadline = (Get-Date).AddMinutes($WaitMinutes)
@@ -61,7 +68,7 @@ $run = $null
 Write-Host "En güncel gateway build bekleniyor..."
 do {
     $response = Invoke-GitHubApi "$api/actions/workflows/$Workflow/runs?branch=$branch&per_page=10" $token
-    $run = $response.workflow_runs | Sort-Object created_at -Descending | Select-Object -First 1
+    $run = $response.workflow_runs | Where-Object { $_.head_sha -eq $head } | Sort-Object created_at -Descending | Select-Object -First 1
     if ($run -and $run.status -eq "completed") { break }
     if ((Get-Date) -ge $deadline) { throw "Gateway build $WaitMinutes dakika içinde tamamlanmadı." }
     Start-Sleep -Seconds 5
@@ -96,7 +103,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "SCP aktarımı başarısız." }
 
     Write-Host "Paket kuruluyor ve gateway yeniden başlatılıyor..."
-    $remoteCommand = "sudo dpkg --install /var/mobile/$($package.Name) && (sudo launchctl bootout system/com.k7bridge.gateway 2>/dev/null || true) && (sudo killall -9 k7bridged 2>/dev/null || true) && sleep 2 && sudo launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.k7bridge.gateway.plist && echo '--- Kurulan gateway ---' && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version'"
+    $resetCommand = if ($ResetPairing) { "sudo rm -f /var/mobile/Library/K7Bridge/pairing-state.json /var/mobile/Library/K7Bridge/pairing-url.txt && " } else { "" }
+    $pairingOutput = if ($ResetPairing) { " && (for n in 1 2 3 4 5 6 7 8 9 10; do [ -s /var/mobile/Library/K7Bridge/pairing-url.txt ] && exit 0; sleep 1; done; exit 1) && echo '--- Yeni eşleştirme metni ---' && sudo cat /var/mobile/Library/K7Bridge/pairing-url.txt" } else { "" }
+    $remoteCommand = "sudo dpkg --install /var/mobile/$($package.Name) && (sudo launchctl bootout system/com.k7bridge.gateway 2>/dev/null || true) && (sudo killall -9 k7bridged 2>/dev/null || true) && ${resetCommand}sleep 2 && sudo launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.k7bridge.gateway.plist && sleep 2 && echo '--- Kurulan gateway ---' && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version' && sudo launchctl print system/com.k7bridge.gateway | grep -E 'state =|last exit code'${pairingOutput}"
     & ssh -t "${DeviceUser}@${DeviceHost}" $remoteCommand
     if ($LASTEXITCODE -ne 0) { throw "Telefondaki kurulum başarısız." }
 

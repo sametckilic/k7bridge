@@ -1,40 +1,95 @@
 import CryptoKit
-import Foundation
+import Combine
+@preconcurrency import Foundation
 import Security
 
 @MainActor
 final class GatewayConnection: NSObject, ObservableObject {
-    @Published private(set) var connected = false
+    @Published private(set) var phase: ConnectionPhase = .unpaired
     @Published private(set) var lastError: String?
+    @Published private(set) var lastMessageAt: Date?
+
+    var connected: Bool { phase.isOnline }
     var onMessage: ((String, Data) -> Void)?
+    var onReady: (() -> Void)?
+    var onProtocolError: ((String) -> Void)?
 
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?
+    private var heartbeatTask: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
     private var sequence: UInt64 = 0
     private var lastIncomingSequence: UInt64 = 0
     private var pin = ""
     private var pairing: PairingMaterial?
+    private var manualDisconnect = false
 
     func connect(_ pairing: PairingMaterial) {
-        disconnect()
-        pin = pairing.document.certificateSHA256.lowercased()
+        manualDisconnect = true
+        closeTransport()
+        manualDisconnect = false
+
         self.pairing = pairing
-        session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
-        var components = URLComponents(); components.scheme = "wss"; components.host = pairing.document.host
-        components.port = Int(pairing.document.port); components.path = "/v1/control"
-        guard let url = components.url else { lastError = "Geçersiz gateway adresi"; return }
-        task = session?.webSocketTask(with: url); task?.resume(); connected = true
-        receive(); Task { await heartbeatLoop() }
-        send(type: "pair", payload: PairCommand(clientId: UUID(), clientPublicKey: pairing.clientPublicKey, oneTimeCode: pairing.document.oneTimeCode), authenticated: false)
+        pin = pairing.document.certificateSHA256.lowercased()
+        sequence = 0
+        lastIncomingSequence = 0
+        lastError = nil
+        phase = .connecting
+
+        var components = URLComponents()
+        components.scheme = "wss"
+        components.host = pairing.document.host
+        components.port = Int(pairing.document.port)
+        components.path = "/v1/control"
+        guard let url = components.url else {
+            fail(ConnectionError.invalidGatewayAddress)
+            return
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 12
+        configuration.waitsForConnectivity = true
+        session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        let socket = session!.webSocketTask(with: url)
+        task = socket
+        socket.resume()
+        receive()
+    }
+
+    func reconnect() {
+        guard let pairing else { phase = .unpaired; return }
+        connect(pairing)
+    }
+
+    func forget() {
+        manualDisconnect = true
+        pairing = nil
+        closeTransport()
+        lastError = nil
+        phase = .unpaired
+    }
+
+    func requestSnapshot() {
         send(type: "snapshotRequest", payload: EmptyPayload())
     }
 
-    func disconnect() {
-        task?.cancel(with: .goingAway, reason: nil); task = nil; session = nil; connected = false
+    func send<P: Codable & Sendable>(type: String, payload: P) {
+        guard phase.isOnline else {
+            lastError = "Gateway henüz komut almaya hazır değil."
+            return
+        }
+        sendInternal(type: type, payload: payload, authenticated: true)
     }
 
-    func send<P: Codable & Sendable>(type: String, payload: P, authenticated: Bool = true) {
-        guard let task else { lastError = "Gateway bağlı değil"; return }
+    private func sendPair() {
+        guard let pairing else { return }
+        let command = PairCommand(clientId: UUID(), clientPublicKey: pairing.clientPublicKey,
+                                  oneTimeCode: pairing.document.oneTimeCode)
+        sendInternal(type: "pair", payload: command, authenticated: false)
+    }
+
+    private func sendInternal<P: Codable & Sendable>(type: String, payload: P, authenticated: Bool) {
+        guard let task else { return }
         sequence += 1
         do {
             let messageId = UUID()
@@ -43,57 +98,173 @@ final class GatewayConnection: NSObject, ObservableObject {
                 let payloadData = try JSONEncoder.k7Sorted.encode(payload)
                 let payloadHash = SHA256.hash(data: payloadData).map { String(format: "%02x", $0) }.joined()
                 let signing = Data("\(type)|\(messageId.uuidString)|\(sequence)|\(payloadHash)".utf8)
-                auth = Data(HMAC<SHA256>.authenticationCode(for: signing, using: SymmetricKey(data: secret))).base64EncodedString()
-            } else { auth = nil }
-            let data = try JSONEncoder.k7.encode(ControlEnvelope(type: type, messageId: messageId, sequence: sequence, payload: payload, auth: auth))
-            task.send(.data(data)) { [weak self] error in
-                if let error { Task { @MainActor in self?.lastError = error.localizedDescription; self?.connected = false } }
+                auth = Data(HMAC<SHA256>.authenticationCode(for: signing,
+                    using: SymmetricKey(data: secret))).base64EncodedString()
+            } else {
+                auth = nil
             }
-        } catch { lastError = error.localizedDescription }
+            let envelope = ControlEnvelope(type: type, messageId: messageId, sequence: sequence,
+                                           payload: payload, auth: auth)
+            let data = try JSONEncoder.k7.encode(envelope)
+            task.send(.data(data)) { [weak self, weak task] error in
+                guard let error else { return }
+                Task { @MainActor in
+                    guard let self, self.task === task else { return }
+                    self.handleTransportFailure(error)
+                }
+            }
+        } catch {
+            fail(error)
+        }
     }
 
     private func receive() {
-        task?.receive { [weak self] result in
+        guard let task else { return }
+        task.receive { [weak self, weak task] result in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.task === task else { return }
                 switch result {
                 case .success(let message):
                     let data: Data
-                    switch message { case .data(let value): data = value; case .string(let value): data = Data(value.utf8); @unknown default: return }
-                    do {
-                        let header = try JSONDecoder.k7.decode(IncomingHeader.self, from: data)
-                        guard header.v == 1, header.sequence > self.lastIncomingSequence else { throw ConnectionError.replayedMessage }
-                        if self.lastIncomingSequence != 0 && header.sequence != self.lastIncomingSequence + 1 { self.send(type: "snapshotRequest", payload: EmptyPayload()) }
-                        self.lastIncomingSequence = header.sequence; self.onMessage?(header.type, data); self.receive()
-                    } catch { self.lastError = error.localizedDescription; self.receive() }
-                case .failure(let error): self.connected = false; self.lastError = error.localizedDescription
+                    switch message {
+                    case .data(let value): data = value
+                    case .string(let value): data = Data(value.utf8)
+                    @unknown default: self.receive(); return
+                    }
+                    self.process(data)
+                    if self.task != nil { self.receive() }
+                case .failure(let error):
+                    self.handleTransportFailure(error)
                 }
             }
         }
     }
 
-    private func heartbeatLoop() async {
-        while !Task.isCancelled && task != nil {
-            try? await Task.sleep(for: .seconds(5))
-            if task != nil { send(type: "heartbeat", payload: HeartbeatPayload(activeCallId: nil)) }
+    private func process(_ data: Data) {
+        do {
+            let header = try JSONDecoder.k7.decode(IncomingHeader.self, from: data)
+            guard header.v == 1, header.sequence > lastIncomingSequence else {
+                throw ConnectionError.replayedMessage
+            }
+            let sequenceGap = lastIncomingSequence != 0 && header.sequence != lastIncomingSequence + 1
+            lastIncomingSequence = header.sequence
+            lastMessageAt = Date()
+
+            switch header.type {
+            case "pairResult":
+                let result = try JSONDecoder.k7.decode(ControlEnvelope<PairResultPayload>.self, from: data).payload
+                guard result.gatewayId == pairing?.document.gatewayId else { throw ConnectionError.gatewayMismatch }
+                phase = .online
+                lastError = nil
+                startHeartbeat()
+                onReady?()
+            case "error":
+                let value = try JSONDecoder.k7.decode(ControlEnvelope<ErrorPayload>.self, from: data).payload
+                lastError = value.message
+                onProtocolError?(value.message)
+                if phase == .authenticating {
+                    phase = .failed(value.message)
+                    closeTransport()
+                } else if value.code == "unauthorized" {
+                    handleTransportFailure(ConnectionError.authenticationLost)
+                }
+            default:
+                onMessage?(header.type, data)
+            }
+            if sequenceGap, phase.isOnline { requestSnapshot() }
+        } catch {
+            lastError = error.localizedDescription
         }
+    }
+
+    private func startHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, self.phase.isOnline else { return }
+                self.sendInternal(type: "heartbeat", payload: HeartbeatPayload(activeCallId: nil), authenticated: true)
+            }
+        }
+    }
+
+    private func handleTransportFailure(_ error: Error) {
+        guard !manualDisconnect else { return }
+        closeTransport()
+        lastError = error.localizedDescription
+        guard pairing != nil else { phase = .unpaired; return }
+        phase = .reconnecting
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self, let pairing = self.pairing else { return }
+            self.connect(pairing)
+        }
+    }
+
+    private func fail(_ error: Error) {
+        lastError = error.localizedDescription
+        phase = .failed(error.localizedDescription)
+    }
+
+    private func closeTransport() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        task?.cancel(with: .goingAway, reason: nil)
+        task = nil
+        session?.invalidateAndCancel()
+        session = nil
     }
 }
 
-extension GatewayConnection: URLSessionDelegate {
+extension GatewayConnection: URLSessionWebSocketDelegate {
+    nonisolated func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                                didOpenWithProtocol protocol: String?) {
+        Task { @MainActor in
+            guard self.task === webSocketTask else { return }
+            self.phase = .authenticating
+            self.sendPair()
+        }
+    }
+
+    nonisolated func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                                didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        Task { @MainActor in
+            guard self.task === webSocketTask else { return }
+            let message = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "WebSocket kapandı (\(closeCode.rawValue))."
+            self.handleTransportFailure(ConnectionError.closed(message))
+        }
+    }
+
     nonisolated func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust,
               let certificate = SecTrustGetCertificateAtIndex(trust, 0) else {
-            completionHandler(.performDefaultHandling, nil); return
+            completionHandler(.performDefaultHandling, nil)
+            return
         }
-        let digest = SHA256.hash(data: SecCertificateCopyData(certificate) as Data).map { String(format: "%02x", $0) }.joined()
+        let digest = SHA256.hash(data: SecCertificateCopyData(certificate) as Data)
+            .map { String(format: "%02x", $0) }.joined()
         Task { @MainActor in
-            if digest == pin { completionHandler(.useCredential, URLCredential(trust: trust)) }
+            if digest == self.pin { completionHandler(.useCredential, URLCredential(trust: trust)) }
             else { completionHandler(.cancelAuthenticationChallenge, nil) }
         }
     }
 }
 
-enum ConnectionError: Error { case replayedMessage }
+enum ConnectionError: LocalizedError {
+    case invalidGatewayAddress, replayedMessage, gatewayMismatch, authenticationLost, closed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidGatewayAddress: return "Gateway adresi geçerli değil."
+        case .replayedMessage: return "Tekrarlanan gateway mesajı reddedildi."
+        case .gatewayMismatch: return "Bağlanılan gateway eşleştirmeyle uyuşmuyor."
+        case .authenticationLost: return "Gateway doğrulaması yenileniyor."
+        case .closed(let message): return message
+        }
+    }
+}

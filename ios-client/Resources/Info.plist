@@ -6,12 +6,17 @@
   <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
   <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
   <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>com.example.K7Bridge.pairing</string>
+    <key>CFBundleURLSchemes</key><array><string>k7bridge</string></array>
+  </dict></array>
   <key>UILaunchScreen</key><dict/>
   <key>NSCameraUsageDescription</key><string>Gateway eşleştirme QR kodunu taramak için kamera kullanılır.</string>
   <key>NSLocalNetworkUsageDescription</key><string>GSM gateway ile çağrı, ses, SMS ve durum verisi alışverişi yapılır.</string>
   <key>NSBonjourServices</key><array><string>_k7bridge._tcp</string></array>
   <key>UIBackgroundModes</key><array><string>voip</string><string>audio</string><string>remote-notification</string></array>
   <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+  <key>UIApplicationSupportsIndirectInputEvents</key><true/>
 </dict>
 </plist>
-

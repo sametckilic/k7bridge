@@ -1,5 +1,26 @@
 import Foundation
 
+enum ConnectionPhase: Equatable, Sendable {
+    case unpaired
+    case connecting
+    case authenticating
+    case online
+    case reconnecting
+    case failed(String)
+
+    var isOnline: Bool { self == .online }
+    var title: String {
+        switch self {
+        case .unpaired: return "Eşleştirme gerekli"
+        case .connecting: return "Gateway aranıyor"
+        case .authenticating: return "Güvenli bağlantı kuruluyor"
+        case .online: return "Gateway bağlı"
+        case .reconnecting: return "Yeniden bağlanıyor"
+        case .failed: return "Bağlantı kurulamadı"
+        }
+    }
+}
+
 enum CallState: String, Codable, Sendable { case idle, incoming, dialing, connecting, active, ended, failed }
 enum SMSState: String, Codable, Sendable { case queued, sent, failed }
 
@@ -20,32 +41,16 @@ struct SMSMessage: Codable, Identifiable, Equatable, Sendable {
 }
 
 struct DeviceStatus: Codable, Equatable, Sendable {
-    var carrier = "—"
-    var radioTechnology = "—"
-    var signalBars = 0
-    var simReady = false
-    var batteryLevel = 0.0
-    var charging = false
-    var thermalState = "nominal"
-    var hotspotEnabled = false
-    var clientConnected = false
+    var carrier: String?
+    var radioTechnology: String?
+    var signalBars: Int?
+    var simReady: Bool?
+    var batteryLevel: Double?
+    var charging: Bool?
+    var thermalState: String?
+    var hotspotEnabled: Bool?
+    var clientConnected: Bool?
     var audioGatePassed = false
-
-    enum CodingKeys: String, CodingKey { case carrier, radioTechnology, signalBars, simReady, batteryLevel, charging, thermalState, hotspotEnabled, clientConnected, audioGatePassed }
-    init() {}
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        carrier = try values.decodeIfPresent(String.self, forKey: .carrier) ?? "—"
-        radioTechnology = try values.decodeIfPresent(String.self, forKey: .radioTechnology) ?? "—"
-        signalBars = try values.decodeIfPresent(Int.self, forKey: .signalBars) ?? 0
-        simReady = try values.decodeIfPresent(Bool.self, forKey: .simReady) ?? false
-        batteryLevel = try values.decodeIfPresent(Double.self, forKey: .batteryLevel) ?? 0
-        charging = try values.decodeIfPresent(Bool.self, forKey: .charging) ?? false
-        thermalState = try values.decodeIfPresent(String.self, forKey: .thermalState) ?? "nominal"
-        hotspotEnabled = try values.decodeIfPresent(Bool.self, forKey: .hotspotEnabled) ?? false
-        clientConnected = try values.decodeIfPresent(Bool.self, forKey: .clientConnected) ?? false
-        audioGatePassed = try values.decodeIfPresent(Bool.self, forKey: .audioGatePassed) ?? false
-    }
 }
 
 struct ControlEnvelope<Payload: Codable & Sendable>: Codable, Sendable {
@@ -58,8 +63,13 @@ struct ControlEnvelope<Payload: Codable & Sendable>: Codable, Sendable {
     let auth: String?
 
     init(type: String, messageId: UUID = UUID(), sequence: UInt64, payload: Payload, auth: String? = nil) {
-        self.v = 1; self.type = type; self.messageId = messageId
-        self.sequence = sequence; self.sentAt = Date(); self.payload = payload; self.auth = auth
+        self.v = 1
+        self.type = type
+        self.messageId = messageId
+        self.sequence = sequence
+        self.sentAt = Date()
+        self.payload = payload
+        self.auth = auth
     }
 }
 
@@ -73,6 +83,8 @@ struct HeartbeatPayload: Codable, Sendable { let activeCallId: UUID? }
 struct PairCommand: Codable, Sendable { let clientId: UUID; let clientPublicKey: Data; let oneTimeCode: String }
 
 struct IncomingHeader: Decodable { let v: Int; let type: String; let messageId: UUID; let sequence: UInt64 }
+struct PairResultPayload: Codable, Sendable { let gatewayId: String }
+struct ErrorPayload: Codable, Sendable { let code: String; let message: String; let refMessageId: UUID? }
 struct IncomingCallPayload: Codable, Sendable { let callId: UUID; let handle: String; let displayName: String? }
 struct CallUpdatePayload: Codable, Sendable { let callId: UUID; let state: CallState; let reason: String? }
 struct SMSPagePayload: Codable, Sendable { let items: [SMSMessage]; let nextCursor: String? }
@@ -92,6 +104,7 @@ struct PairingDocument: Codable, Sendable {
 
 enum PhoneNumberPolicy {
     static let emergency = ["112", "911", "999", "110", "155", "156"]
+
     static func normalize(_ raw: String, countryCode: String = "+90") -> String? {
         let trimmed = String(raw.filter { $0.isNumber || $0 == "+" })
         guard !trimmed.isEmpty, !emergency.contains(String(trimmed.filter(\.isNumber))) else { return nil }
