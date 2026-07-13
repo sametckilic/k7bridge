@@ -129,6 +129,48 @@ final class AppModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func updateGatewayAddress(_ rawValue: String) -> Bool {
+        let host = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let current = pairing,
+              !host.isEmpty, host.count <= 253,
+              host.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              host.rangeOfCharacter(from: CharacterSet(charactersIn: "/?#")) == nil else {
+            errorMessage = "Gateway adresi geçerli değil. Yalnız IP adresi veya .local adı girin."
+            return false
+        }
+        guard host != current.document.host else {
+            connection.reconnect()
+            return true
+        }
+        let document = PairingDocument(
+            gatewayId: current.document.gatewayId,
+            host: host,
+            port: current.document.port,
+            oneTimeCode: current.document.oneTimeCode,
+            gatewayPublicKey: current.document.gatewayPublicKey,
+            certificateSHA256: current.document.certificateSHA256,
+            relayURL: current.document.relayURL,
+            relaySecret: current.document.relaySecret
+        )
+        let updated = PairingMaterial(document: document,
+                                      clientPrivateKey: current.clientPrivateKey,
+                                      clientPublicKey: current.clientPublicKey,
+                                      sharedSecret: current.sharedSecret)
+        do {
+            try PairingStore.shared.store(updated)
+            pairing = updated
+            pairingNotice = "Gateway adresi güncellendi; bağlantı yenileniyor…"
+            diagnostics.record(component: "pairing", event: "gateway_address_updated",
+                               fields: ["oldHost": current.document.host, "newHost": host])
+            connection.connect(updated)
+            return true
+        } catch {
+            errorMessage = "Gateway adresi kaydedilemedi: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     func dial(_ value: String) {
         guard connection.connected else { errorMessage = "Önce gateway bağlantısını kurun."; return }
         do { try calls.startOutgoing(rawNumber: value, countryCode: countryCode) }

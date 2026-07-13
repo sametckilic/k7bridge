@@ -380,6 +380,7 @@ private struct PairingView: View {
     @State private var value = ""
     @State private var showingScanner = false
     @State private var confirmForget = false
+    @State private var gatewayAddress = ""
 
     var body: some View {
         NavigationStack {
@@ -430,9 +431,25 @@ private struct PairingView: View {
                             K7Card {
                                 VStack(alignment: .leading, spacing: 12) {
                                     K7SectionTitle(title: "Kayıtlı gateway")
-                                    LabeledContent("Adres", value: pairing.document.host)
+                                    LabeledContent("Bağlantı adresi") {
+                                        TextField("172.20.10.1", text: $gatewayAddress)
+                                            .textInputAutocapitalization(.never)
+                                            .autocorrectionDisabled()
+                                            .keyboardType(.numbersAndPunctuation)
+                                            .multilineTextAlignment(.trailing)
+                                    }
                                     LabeledContent("Port", value: String(pairing.document.port))
                                     LabeledContent("Kimlik", value: String(pairing.document.gatewayId.prefix(8)))
+                                    Button {
+                                        if model.updateGatewayAddress(gatewayAddress) {
+                                            UIApplication.shared.k7DismissKeyboard()
+                                        }
+                                    } label: {
+                                        Label("Adresi kaydet ve bağlan", systemImage: "network")
+                                            .frame(maxWidth: .infinity, minHeight: 44)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(gatewayAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                                     Divider()
                                     Button("Bu gateway'i unut", role: .destructive) { confirmForget = true }
                                 }
@@ -501,6 +518,10 @@ private struct PairingView: View {
                 .k7KeyboardDismissal()
             }
             .navigationTitle("Ayarlar")
+            .onAppear { gatewayAddress = model.pairing?.document.host ?? "" }
+            .onChange(of: model.pairing?.document.host) { _, host in
+                if let host { gatewayAddress = host }
+            }
             .sheet(isPresented: $showingScanner) {
                 NavigationStack {
                     QRScannerView { url in
