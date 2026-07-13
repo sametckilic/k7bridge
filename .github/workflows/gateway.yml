@@ -34,7 +34,7 @@ jobs:
 
       - name: Build rootless package
         working-directory: gateway
-        run: gmake clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless messages=yes
+        run: gmake clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
@@ -42,4 +42,3 @@ jobs:
           name: K7BridgeGateway-rootless
           path: gateway/packages/*.deb
           if-no-files-found: error
-
