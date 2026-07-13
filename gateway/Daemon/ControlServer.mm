@@ -28,20 +28,22 @@
     nw_listener_start(_listener); return YES;
 }
 - (void)accept:(nw_connection_t)connection {
+    NSLog(@"K7Bridge accepted control connection");
     [_connections addObject:connection]; nw_connection_set_queue(connection,_queue);
     __weak typeof(self) weakSelf=self; nw_connection_set_state_changed_handler(connection,^(nw_connection_state_t state,nw_error_t error){
         __strong typeof(weakSelf) strongSelf=weakSelf; if(!strongSelf)return;
-        if(state==nw_connection_state_ready)[strongSelf receive:connection];
-        if(state==nw_connection_state_failed||state==nw_connection_state_cancelled)[strongSelf->_connections removeObject:connection];
+        if(state==nw_connection_state_ready){NSLog(@"K7Bridge control connection ready");[strongSelf receive:connection];}
+        if(state==nw_connection_state_failed){NSLog(@"K7Bridge control connection failed: %d",error?nw_error_get_error_code(error):0);[strongSelf->_connections removeObject:connection];}
+        if(state==nw_connection_state_cancelled){NSLog(@"K7Bridge control connection cancelled");[strongSelf->_connections removeObject:connection];}
     });
     nw_connection_start(connection);
 }
 - (void)receive:(nw_connection_t)connection {
     __weak typeof(self) weakSelf=self;
     nw_connection_receive_message(connection,^(dispatch_data_t content,nw_content_context_t context,bool complete,nw_error_t error){
-        if(error||!content){nw_connection_cancel(connection);return;} const void *buffer=NULL; size_t length=0; dispatch_data_t mapped=dispatch_data_create_map(content,&buffer,&length);
+        if(error||!content){NSLog(@"K7Bridge control receive ended: %d",error?nw_error_get_error_code(error):0);nw_connection_cancel(connection);return;} const void *buffer=NULL; size_t length=0; dispatch_data_t mapped=dispatch_data_create_map(content,&buffer,&length);
         NSData *data=[NSData dataWithBytes:buffer length:length]; if(mapped) (void)mapped;
-        NSDictionary *request=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]; NSDictionary *reply=weakSelf.handler(request?:@{});
+        NSDictionary *request=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]; NSLog(@"K7Bridge received control message: %@",request[@"type"]?:@"invalid"); NSDictionary *reply=weakSelf.handler(request?:@{});
         [weakSelf send:reply to:connection]; [weakSelf receive:connection];
     });
 }
