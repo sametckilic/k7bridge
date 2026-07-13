@@ -1,5 +1,6 @@
 #import "DeviceStatus.h"
-#import <CoreTelephony/CoreTelephony.h>
+#import <CoreTelephony/CTCarrier.h>
+#import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #import <UIKit/UIKit.h>
 
 @implementation K7DeviceStatus

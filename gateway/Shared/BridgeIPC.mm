@@ -1,6 +1,8 @@
 #import "BridgeIPC.h"
 #import <CoreFoundation/CoreFoundation.h>
 
+@interface K7BridgeIPC () @property(nonatomic,copy) K7MessageHandler handler; @end
+
 static CFDataRef K7PortCallback(CFMessagePortRef local, SInt32 messageID, CFDataRef data, void *info) {
     K7BridgeIPC *bridge = (__bridge K7BridgeIPC *)info;
     NSDictionary *message = [NSJSONSerialization JSONObjectWithData:(__bridge NSData *)data options:0 error:nil];
@@ -8,7 +10,6 @@ static CFDataRef K7PortCallback(CFMessagePortRef local, SInt32 messageID, CFData
     return (__bridge_retained CFDataRef)[NSJSONSerialization dataWithJSONObject:reply options:0 error:nil];
 }
 
-@interface K7BridgeIPC () @property(nonatomic,copy) K7MessageHandler handler; @end
 @implementation K7BridgeIPC { CFMessagePortRef _port; CFRunLoopSourceRef _source; }
 - (instancetype)initLocalPort:(NSString *)name handler:(K7MessageHandler)handler {
     if ((self=[super init])) { _handler=[handler copy]; CFMessagePortContext context={0,(__bridge void *)self,NULL,NULL,NULL};
@@ -25,4 +26,3 @@ static CFDataRef K7PortCallback(CFMessagePortRef local, SInt32 messageID, CFData
     NSDictionary *object=[NSJSONSerialization JSONObjectWithData:(__bridge NSData *)response options:0 error:nil]; CFRelease(response); return object;
 }
 @end
-
