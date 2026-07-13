@@ -96,7 +96,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "SCP aktarımı başarısız." }
 
     Write-Host "Paket kuruluyor ve gateway yeniden başlatılıyor..."
-    $remoteCommand = "sudo dpkg --install /var/mobile/$($package.Name) && sudo launchctl kickstart -k system/com.k7bridge.gateway && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version'"
+    $remoteCommand = "sudo dpkg --install /var/mobile/$($package.Name) && sudo launchctl kickstart -k system/com.k7bridge.gateway && echo '--- Kurulan gateway ---' && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version'"
     & ssh -t "${DeviceUser}@${DeviceHost}" $remoteCommand
     if ($LASTEXITCODE -ne 0) { throw "Telefondaki kurulum başarısız." }
 

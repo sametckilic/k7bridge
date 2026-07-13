@@ -32,6 +32,13 @@ jobs:
           cp -R /tmp/sodium-dev/var/jb/usr/lib/. "$THEOS/lib/iphone/rootless/"
           cp -R /tmp/sodium-runtime/var/jb/usr/lib/. "$THEOS/lib/iphone/rootless/"
 
+      - name: Stamp package version
+        run: |
+          short_sha="${GITHUB_SHA:0:7}"
+          version="0.1.0+git.${GITHUB_RUN_NUMBER}.${short_sha}"
+          sed -i '' -E "s/^Version:.*/Version: ${version}/" gateway/control
+          echo "Building gateway package ${version}"
+
       - name: Build rootless package
         working-directory: gateway
         run: gmake clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
