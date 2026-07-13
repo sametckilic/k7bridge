@@ -4,6 +4,7 @@
 #import "../Shared/BridgeIPC.h"
 
 static BOOL K7CommandPortReady=NO;
+static NSDictionary *K7LastHealth;
 
 static void K7Diagnostic(NSString *event,NSString *level,NSDictionary *fields) {
     [K7BridgeIPC send:@{ @"type":@"diagnostic", @"component":@"telephony",
@@ -88,6 +89,10 @@ static K7CallObserver *K7Observer;
         @"callCount":@(calls.count),
         @"callObservationReady":@(K7CommandPortReady&&center&&callsAvailable)
     };
+    if (![status isEqual:K7LastHealth]) {
+        K7LastHealth=[status copy];
+        NSLog(@"K7TelephonyBridge health: %@",status);
+    }
     [K7BridgeIPC send:@{@"type":@"telephonyStatus",@"status":status}
         toPort:@"com.k7bridge.gateway" timeout:0.5];
 }

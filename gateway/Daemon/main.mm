@@ -9,6 +9,8 @@
 #import "../Shared/BridgeIPC.h"
 #import <sodium.h>
 #import <unistd.h>
+#import <fcntl.h>
+#import <sys/file.h>
 
 static NSString *const K7DataDirectory=@"/var/mobile/Library/K7Bridge";
 
@@ -48,6 +50,12 @@ int main(int argc,char **argv) { @autoreleasepool {
         fields:@{@"version":@"diagnostics-v1"}];
     [[NSFileManager defaultManager] createDirectoryAtPath:K7DataDirectory
         withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *lockPath=[K7DataDirectory stringByAppendingPathComponent:@"k7bridged.lock"];
+    int lockFD=open(lockPath.fileSystemRepresentation,O_CREAT|O_RDWR,0644);
+    if (lockFD<0 || flock(lockFD,LOCK_EX|LOCK_NB)!=0) {
+        [diagnostics recordComponent:@"daemon" level:@"error" event:@"duplicate_process_rejected" fields:@{}];
+        return 75;
+    }
 
     K7StateMachine *state=[K7StateMachine new];
     K7SMSStore *sms=[K7SMSStore new];
