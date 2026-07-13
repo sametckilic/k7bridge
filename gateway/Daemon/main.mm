@@ -18,7 +18,7 @@ int main(int argc,char **argv){ @autoreleasepool {
     NSData *identity=[NSData dataWithContentsOfFile:[K7DataDirectory stringByAppendingPathComponent:@"identity.p12"]];
     NSString *password=[NSString stringWithContentsOfFile:[K7DataDirectory stringByAppendingPathComponent:@"identity.password"] encoding:NSUTF8StringEncoding error:nil];
     if(!identity||!password){NSLog(@"K7Bridge fail-closed: identity.p12/password missing; run provision-device.sh");return 78;}
-    __block uint64_t outgoingSequence=0,lastIncomingSequence=0; __block K7ControlServer *server; __block NSData *sharedKey=nil;
+    __block uint64_t outgoingSequence=0,lastIncomingSequence=0; __block K7ControlServer *server; __block NSData *sharedKey=pairing.pairedSharedKey;
     NSDictionary *(^envelope)(NSString *,NSDictionary *)=^NSDictionary *(NSString *type,NSDictionary *payload){NSISO8601DateFormatter *formatter=[NSISO8601DateFormatter new];formatter.formatOptions=NSISO8601DateFormatWithInternetDateTime;return@{@"v":@1,@"type":type,@"messageId":[NSUUID UUID].UUIDString,@"sequence":@(++outgoingSequence),@"sentAt":[formatter stringFromDate:[NSDate date]],@"payload":payload?:@{}};};
     server=[[K7ControlServer alloc]initWithPort:7443 PKCS12:identity password:[password stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] handler:^NSDictionary *(NSDictionary *message){
         NSString *type=message[@"type"];NSDictionary *payload=message[@"payload"]?:@{};NSError *error=nil;
