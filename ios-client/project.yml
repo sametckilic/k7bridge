@@ -7,16 +7,34 @@ settings:
   base:
     SWIFT_VERSION: 5.0
     SWIFT_STRICT_CONCURRENCY: minimal
-    CURRENT_PROJECT_VERSION: 4
-    MARKETING_VERSION: 0.2.1
+    CURRENT_PROJECT_VERSION: 5
+    MARKETING_VERSION: 0.2.2
 targets:
   K7Bridge:
     type: application
     platform: iOS
-    sources: [Sources]
-    resources: [Resources/Assets.xcassets]
+    sources:
+      - Sources
+      - path: Resources/Assets.xcassets
+        buildPhase: resources
     info:
       path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: K7Bridge
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleURLTypes:
+          - CFBundleURLName: com.example.K7Bridge.pairing
+            CFBundleURLSchemes: [k7bridge]
+        UILaunchScreen: {}
+        NSCameraUsageDescription: Gateway eşleştirme QR kodunu taramak için kamera kullanılır.
+        NSLocalNetworkUsageDescription: GSM gateway ile çağrı, ses, SMS ve durum verisi alışverişi yapılır.
+        NSBonjourServices: [_k7bridge._tcp]
+        UIBackgroundModes: [voip, audio, remote-notification]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIRequiresFullScreen: true
+        UIApplicationSupportsIndirectInputEvents: true
     entitlements:
       path: Resources/K7Bridge.entitlements
     settings:
@@ -25,6 +43,8 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CURRENT_PROJECT_VERSION: 5
+        MARKETING_VERSION: 0.2.2
     scheme:
       testTargets: [K7BridgeTests]
   K7BridgeTests:

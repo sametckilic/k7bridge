@@ -30,8 +30,16 @@ jobs:
             CODE_SIGN_ENTITLEMENTS="" \
             SWIFT_ACTIVE_COMPILATION_CONDITIONS=K7_LOCAL_ONLY \
             build
+          app="$RUNNER_TEMP/K7DerivedData/Build/Products/Release-iphoneos/K7Bridge.app"
+          info="$app/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")" = "0.2.2"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")" = "5"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIDeviceFamily:0' "$info")" = "1"
+          /usr/libexec/PlistBuddy -c 'Print :UILaunchScreen' "$info" >/dev/null
+          /usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' "$info" >/dev/null
+          test -f "$app/Assets.car"
           mkdir -p "$RUNNER_TEMP/Payload"
-          cp -R "$RUNNER_TEMP/K7DerivedData/Build/Products/Release-iphoneos/K7Bridge.app" "$RUNNER_TEMP/Payload/"
+          cp -R "$app" "$RUNNER_TEMP/Payload/"
           cd "$RUNNER_TEMP"
           ditto -c -k --sequesterRsrc --keepParent Payload K7Bridge-local-unsigned.ipa
       - name: Upload IPA

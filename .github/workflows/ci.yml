@@ -25,4 +25,13 @@ jobs:
         run: >-
           xcodebuild -project K7Bridge.xcodeproj -scheme K7Bridge
           -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/K7CIDerivedData"
           CODE_SIGNING_ALLOWED=NO build-for-testing
+      - name: Verify modern iPhone bundle metadata
+        run: |
+          app="$RUNNER_TEMP/K7CIDerivedData/Build/Products/Debug-iphonesimulator/K7Bridge.app"
+          info="$app/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")" = "0.2.2"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")" = "5"
+          /usr/libexec/PlistBuddy -c 'Print :UILaunchScreen' "$info" >/dev/null
+          test -f "$app/Assets.car"
