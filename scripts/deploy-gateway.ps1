@@ -8,6 +8,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$repositoryRoot = Split-Path -Parent $PSScriptRoot
+Set-Location -LiteralPath $repositoryRoot
 
 function Find-Git {
     $command = Get-Command git -ErrorAction SilentlyContinue
