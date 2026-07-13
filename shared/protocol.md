@@ -29,6 +29,8 @@ X25519/HKDF pairing key. The WSS certificate DER SHA-256 is pinned from the QR d
 | `pair` | client → gateway | `clientId`, `clientPublicKey`, `oneTimeCode` |
 | `pairResult` | gateway → client | `gatewayId`, `certificateSHA256`, `relayURL` |
 | `snapshotRequest` | client → gateway | empty |
+| `diagnosticsRequest` | client → gateway | `limit` |
+| `diagnosticsPage` | gateway → client | structured recent entries and telephony health |
 | `snapshot` | gateway → client | `call`, `device`, `smsCursor` |
 | `heartbeat` | both | optional `activeCallId` |
 | `incomingCall` | gateway → client | `callId`, `handle`, `displayName` |

@@ -6,7 +6,7 @@ INSTALL_TARGET_PROCESSES = callservicesd mediaserverd
 include $(THEOS)/makefiles/common.mk
 
 TOOL_NAME = k7bridged
-k7bridged_FILES = Daemon/main.mm Daemon/StateMachine.mm Daemon/SMSStore.mm Daemon/Pairing.mm Daemon/ControlServer.mm Daemon/RelayClient.mm Daemon/DeviceStatus.mm Shared/BridgeIPC.mm
+k7bridged_FILES = Daemon/main.mm Daemon/StateMachine.mm Daemon/SMSStore.mm Daemon/Pairing.mm Daemon/ControlServer.mm Daemon/RelayClient.mm Daemon/DeviceStatus.mm Daemon/Diagnostics.mm Shared/BridgeIPC.mm
 k7bridged_FRAMEWORKS = Foundation CoreTelephony Network Security UIKit
 k7bridged_LIBRARIES = sqlite3 sodium
 k7bridged_CFLAGS = -fobjc-arc -IHeaders -Wno-nullability-completeness -Wno-module-import-in-extern-c -Wno-deprecated-declarations

@@ -13,6 +13,7 @@ final class GatewayConnection: NSObject, ObservableObject {
     var onMessage: ((String, Data) -> Void)?
     var onReady: (() -> Void)?
     var onProtocolError: ((String) -> Void)?
+    var onDiagnostic: ((String, String, String, [String: String]) -> Void)?
 
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?
@@ -35,6 +36,8 @@ final class GatewayConnection: NSObject, ObservableObject {
         lastIncomingSequence = 0
         lastError = nil
         phase = .connecting
+        diagnostic("connect_started", fields: ["host": pairing.document.host,
+                                                "port": String(pairing.document.port)])
 
         var components = URLComponents()
         components.scheme = "wss"
@@ -42,6 +45,7 @@ final class GatewayConnection: NSObject, ObservableObject {
         components.port = Int(pairing.document.port)
         components.path = "/v1/control"
         guard let url = components.url else {
+            diagnostic("invalid_gateway_address", level: "error")
             fail(ConnectionError.invalidGatewayAddress)
             return
         }
@@ -91,6 +95,7 @@ final class GatewayConnection: NSObject, ObservableObject {
     private func sendInternal<P: Codable & Sendable>(type: String, payload: P, authenticated: Bool) {
         guard let task else { return }
         sequence += 1
+        if type != "heartbeat" { diagnostic("message_sent", fields: ["type": type, "sequence": String(sequence)]) }
         do {
             let messageId = UUID()
             let auth: String?
@@ -156,11 +161,13 @@ final class GatewayConnection: NSObject, ObservableObject {
                 guard result.gatewayId == pairing?.document.gatewayId else { throw ConnectionError.gatewayMismatch }
                 phase = .online
                 lastError = nil
+                diagnostic("connection_online")
                 startHeartbeat()
                 onReady?()
             case "error":
                 let value = try JSONDecoder.k7.decode(ControlEnvelope<ErrorPayload>.self, from: data).payload
                 lastError = value.message
+                diagnostic("gateway_error", level: "error", fields: ["code": value.code, "message": value.message])
                 onProtocolError?(value.message)
                 if phase == .authenticating {
                     phase = .failed(value.message)
@@ -169,11 +176,16 @@ final class GatewayConnection: NSObject, ObservableObject {
                     handleTransportFailure(ConnectionError.authenticationLost)
                 }
             default:
+                if header.type != "heartbeat" && header.type != "deviceStatus" {
+                    diagnostic("message_received", fields: ["type": header.type,
+                                                              "sequence": String(header.sequence)])
+                }
                 onMessage?(header.type, data)
             }
             if sequenceGap, phase.isOnline { requestSnapshot() }
         } catch {
             lastError = error.localizedDescription
+            diagnostic("message_decode_failed", level: "error", fields: ["error": error.localizedDescription])
         }
     }
 
@@ -192,6 +204,7 @@ final class GatewayConnection: NSObject, ObservableObject {
         guard !manualDisconnect else { return }
         closeTransport()
         lastError = error.localizedDescription
+        diagnostic("transport_failed", level: "error", fields: ["error": error.localizedDescription])
         guard pairing != nil else { phase = .unpaired; return }
         phase = .reconnecting
         reconnectTask?.cancel()
@@ -205,6 +218,7 @@ final class GatewayConnection: NSObject, ObservableObject {
     private func fail(_ error: Error) {
         lastError = error.localizedDescription
         phase = .failed(error.localizedDescription)
+        diagnostic("connection_failed", level: "error", fields: ["error": error.localizedDescription])
     }
 
     private func closeTransport() {
@@ -217,6 +231,10 @@ final class GatewayConnection: NSObject, ObservableObject {
         session?.invalidateAndCancel()
         session = nil
     }
+
+    private func diagnostic(_ event: String, level: String = "info", fields: [String: String] = [:]) {
+        onDiagnostic?("network", event, level, fields)
+    }
 }
 
 extension GatewayConnection: URLSessionWebSocketDelegate {
@@ -225,6 +243,7 @@ extension GatewayConnection: URLSessionWebSocketDelegate {
         Task { @MainActor in
             guard self.task === webSocketTask else { return }
             self.phase = .authenticating
+            self.diagnostic("websocket_open")
             self.sendPair()
         }
     }
@@ -234,6 +253,7 @@ extension GatewayConnection: URLSessionWebSocketDelegate {
         Task { @MainActor in
             guard self.task === webSocketTask else { return }
             let message = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "WebSocket kapandı (\(closeCode.rawValue))."
+            self.diagnostic("websocket_closed", level: "warning", fields: ["code": String(closeCode.rawValue)])
             self.handleTransportFailure(ConnectionError.closed(message))
         }
     }
@@ -249,8 +269,13 @@ extension GatewayConnection: URLSessionWebSocketDelegate {
         let digest = SHA256.hash(data: SecCertificateCopyData(certificate) as Data)
             .map { String(format: "%02x", $0) }.joined()
         Task { @MainActor in
-            if digest == self.pin { completionHandler(.useCredential, URLCredential(trust: trust)) }
-            else { completionHandler(.cancelAuthenticationChallenge, nil) }
+            if digest == self.pin {
+                self.diagnostic("certificate_pin_verified")
+                completionHandler(.useCredential, URLCredential(trust: trust))
+            } else {
+                self.diagnostic("certificate_pin_rejected", level: "error")
+                completionHandler(.cancelAuthenticationChallenge, nil)
+            }
         }
     }
 }

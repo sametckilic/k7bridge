@@ -17,12 +17,16 @@ final class AppModel: ObservableObject {
     @Published var pairing: PairingMaterial?
     @Published var pairingNotice: String?
     @Published var lastStatusUpdate: Date?
+    @Published private(set) var gatewayDiagnostics: [DiagnosticEntry] = []
+    @Published private(set) var telephonyStatus: TelephonyBridgeStatus?
+    @Published var diagnosticsNotice: String?
 
     let connection = GatewayConnection()
     let calls = CallCoordinator()
     let pushes = PushCoordinator()
     let media = MediaEngine()
     let contacts: ContactDirectory
+    let diagnostics = ClientDiagnostics()
 
     private var cancellables: Set<AnyCancellable> = []
 
@@ -42,6 +46,13 @@ final class AppModel: ObservableObject {
                 DispatchQueue.main.async { self?.refreshCurrentCallName() }
             }
             .store(in: &cancellables)
+        diagnostics.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        connection.onDiagnostic = { [weak self] component, event, level, fields in
+            self?.diagnostics.record(component: component, event: event, level: level, fields: fields)
+        }
         connection.onMessage = { [weak self] type, data in self?.handle(type: type, data: data) }
         connection.onReady = { [weak self] in
             guard let self else { return }
@@ -52,10 +63,14 @@ final class AppModel: ObservableObject {
                 self.errorMessage = "Eşleştirme doğrulandı ancak kaydedilemedi: \(error.localizedDescription)"
             }
             self.refreshAll()
+            self.refreshDiagnostics()
         }
         connection.onProtocolError = { [weak self] message in self?.errorMessage = message }
         calls.command = { [weak self] type, command in self?.connection.send(type: type, payload: command) }
         calls.onError = { [weak self] error in self?.errorMessage = error.localizedDescription }
+        calls.onDiagnostic = { [weak self] event, level, fields in
+            self?.diagnostics.record(component: "callkit", event: event, level: level, fields: fields)
+        }
         calls.dialCommand = { [weak self] command in
             self?.call = GatewayCall(id: command.callId, handle: command.handle,
                                      displayName: self?.contacts.name(for: command.handle), state: .dialing)
@@ -132,6 +147,7 @@ final class AppModel: ObservableObject {
     func displayName(for number: String) -> String? { contacts.name(for: number) }
 
     func applicationDidBecomeActive() {
+        diagnostics.record(component: "lifecycle", event: "application_active")
         contacts.reloadIfAuthorized()
         if connection.connected { refreshAll() }
         else if pairing != nil, connection.phase != .connecting, connection.phase != .authenticating {
@@ -165,16 +181,44 @@ final class AppModel: ObservableObject {
         connection.send(type: "smsList", payload: SMSListCommand(cursor: cursor, limit: 50))
     }
 
+    func refreshDiagnostics() {
+        guard connection.connected else {
+            diagnosticsNotice = "Tanı kayıtları için gateway bağlantısı gerekli."
+            return
+        }
+        diagnostics.record(component: "diagnostics", event: "gateway_logs_requested")
+        connection.send(type: "diagnosticsRequest", payload: DiagnosticsRequestPayload(limit: 300))
+    }
+
+    func copyDiagnostics() {
+        let text = diagnostics.exportText(gatewayEntries: gatewayDiagnostics)
+        guard !text.isEmpty else {
+            diagnosticsNotice = "Henüz kopyalanacak tanı kaydı yok."
+            return
+        }
+        UIPasteboard.general.string = text
+        diagnosticsNotice = "Tanı kayıtları panoya kopyalandı."
+    }
+
+    var recentDiagnostics: [DiagnosticEntry] {
+        Array((diagnostics.entries + gatewayDiagnostics).sorted { $0.timestamp > $1.timestamp }.prefix(20))
+    }
+
     private func handle(type: String, data: Data) {
         do {
             switch type {
             case "incomingCall":
                 let raw = try JSONDecoder.k7.decode(ControlEnvelope<IncomingCallPayload>.self, from: data).payload
                 let value = resolvedIncoming(raw)
+                diagnostics.record(component: "protocol", event: "incoming_call_received",
+                                   fields: ["callId": value.callId.uuidString,
+                                            "handlePresent": String(!value.handle.isEmpty)])
                 call = GatewayCall(id: value.callId, handle: value.handle, displayName: value.displayName, state: .incoming)
                 calls.reportIncoming(value)
             case "callUpdate":
                 let value = try JSONDecoder.k7.decode(ControlEnvelope<CallUpdatePayload>.self, from: data).payload
+                diagnostics.record(component: "protocol", event: "call_update_received",
+                                   fields: ["callId": value.callId.uuidString, "state": value.state.rawValue])
                 if call?.id == value.callId { call?.state = value.state }
                 calls.reportUpdate(value)
                 if value.state == .ended || value.state == .failed {
@@ -214,11 +258,20 @@ final class AppModel: ObservableObject {
             case "deviceStatus":
                 device = try JSONDecoder.k7.decode(ControlEnvelope<DeviceStatus>.self, from: data).payload
                 lastStatusUpdate = Date()
+            case "diagnosticsPage":
+                let value = try JSONDecoder.k7.decode(ControlEnvelope<DiagnosticsPagePayload>.self, from: data).payload
+                gatewayDiagnostics = value.entries
+                telephonyStatus = value.telephonyStatus
+                diagnosticsNotice = "\(value.entries.count) gateway kaydı alındı."
+                diagnostics.record(component: "diagnostics", event: "gateway_logs_received",
+                                   fields: ["count": String(value.entries.count)])
             default:
                 break
             }
         } catch {
             errorMessage = "Gateway cevabı okunamadı: \(error.localizedDescription)"
+            diagnostics.record(component: "protocol", event: "payload_decode_failed", level: "error",
+                               fields: ["type": type, "error": error.localizedDescription])
         }
     }
 

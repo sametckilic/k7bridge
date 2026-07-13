@@ -40,4 +40,11 @@ final class PhoneNumberPolicyTests: XCTestCase {
         XCTAssertFalse(local.intersection(international).isEmpty)
         XCTAssertTrue(local.contains("5551112233"))
     }
+
+    func testGatewayDiagnosticEntryDecodes() throws {
+        let json = #"{"timestamp":"2026-07-14T12:34:56.123Z","sequence":7,"source":"gateway","level":"info","component":"telephony","event":"health_changed","fields":{"callObservationReady":"1"}}"#
+        let entry = try JSONDecoder.k7.decode(DiagnosticEntry.self, from: Data(json.utf8))
+        XCTAssertEqual(entry.component, "telephony")
+        XCTAssertEqual(entry.fields["callObservationReady"], "1")
+    }
 }

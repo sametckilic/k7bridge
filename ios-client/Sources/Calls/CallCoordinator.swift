@@ -11,6 +11,7 @@ final class CallCoordinator: NSObject, ObservableObject {
     var audioActivated: (() -> Void)?
     var audioDeactivated: (() -> Void)?
     var onError: ((Error) -> Void)?
+    var onDiagnostic: ((String, String, [String: String]) -> Void)?
     private var incomingCallIDs: Set<UUID> = []
     private var incomingOriginIDs: Set<UUID> = []
     private var reportedCallIDs: Set<UUID> = []
@@ -28,6 +29,7 @@ final class CallCoordinator: NSObject, ObservableObject {
 
     func reportIncoming(_ call: IncomingCallPayload, completion: @escaping (Error?) -> Void = { _ in }) {
         guard reportedCallIDs.insert(call.callId).inserted else { completion(nil); return }
+        diagnostic("incoming_report_requested", fields: ["callId": call.callId.uuidString])
         incomingCallIDs.insert(call.callId)
         incomingOriginIDs.insert(call.callId)
         let update = CXCallUpdate()
@@ -40,6 +42,10 @@ final class CallCoordinator: NSObject, ObservableObject {
                     self?.incomingCallIDs.remove(call.callId)
                     self?.reportedCallIDs.remove(call.callId)
                 }
+                self?.diagnostic(error == nil ? "incoming_reported" : "incoming_report_failed",
+                                 level: error == nil ? "info" : "error",
+                                 fields: ["callId": call.callId.uuidString,
+                                          "error": error?.localizedDescription ?? ""])
                 completion(error)
             }
         }
@@ -48,6 +54,7 @@ final class CallCoordinator: NSObject, ObservableObject {
     func startOutgoing(rawNumber: String, countryCode: String) throws {
         guard let number = PhoneNumberPolicy.normalize(rawNumber, countryCode: countryCode) else { throw CallError.invalidNumber }
         let id = UUID()
+        diagnostic("outgoing_requested", fields: ["callId": id.uuidString])
         let handle = CXHandle(type: .phoneNumber, value: number)
         let transaction = CXTransaction(action: CXStartCallAction(call: id, handle: handle))
         controller.request(transaction) { [weak self] error in
@@ -74,6 +81,8 @@ final class CallCoordinator: NSObject, ObservableObject {
     }
 
     func reportUpdate(_ update: CallUpdatePayload) {
+        diagnostic("state_received", fields: ["callId": update.callId.uuidString,
+                                               "state": update.state.rawValue])
         switch update.state {
         case .connecting:
             if !incomingOriginIDs.contains(update.callId) {
@@ -106,6 +115,10 @@ final class CallCoordinator: NSObject, ObservableObject {
         guard !trimmed.isEmpty else { return CXHandle(type: .generic, value: "Gizli numara") }
         return CXHandle(type: .phoneNumber, value: trimmed)
     }
+
+    private func diagnostic(_ event: String, level: String = "info", fields: [String: String] = [:]) {
+        onDiagnostic?(event, level, fields)
+    }
 }
 
 extension CallCoordinator: CXProviderDelegate {
@@ -117,12 +130,14 @@ extension CallCoordinator: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
         Task { @MainActor in
             incomingCallIDs.remove(action.callUUID)
+            diagnostic("answer_action", fields: ["callId": action.callUUID.uuidString])
             command?("answer", CallCommand(callId: action.callUUID)); action.fulfill()
         }
     }
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
         Task { @MainActor in
             let type = incomingCallIDs.remove(action.callUUID) != nil ? "reject" : "end"
+            diagnostic("end_action", fields: ["callId": action.callUUID.uuidString, "type": type])
             command?(type, CallCommand(callId: action.callUUID)); action.fulfill()
             reportedCallIDs.remove(action.callUUID)
         }

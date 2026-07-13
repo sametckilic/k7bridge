@@ -5,6 +5,7 @@
 #import "StateMachine.h"
 #import "RelayClient.h"
 #import "DeviceStatus.h"
+#import "Diagnostics.h"
 #import "../Shared/BridgeIPC.h"
 #import <sodium.h>
 #import <unistd.h>
@@ -42,6 +43,9 @@ static BOOL K7ValidHandle(NSString *value) {
 }
 
 int main(int argc,char **argv) { @autoreleasepool {
+    K7Diagnostics *diagnostics=[K7Diagnostics shared];
+    [diagnostics recordComponent:@"daemon" level:@"info" event:@"process_start"
+        fields:@{@"version":@"diagnostics-v1"}];
     [[NSFileManager defaultManager] createDirectoryAtPath:K7DataDirectory
         withIntermediateDirectories:YES attributes:nil error:nil];
 
@@ -60,9 +64,14 @@ int main(int argc,char **argv) { @autoreleasepool {
     __block uint64_t lastIncomingSequence=0;
     __block K7ControlServer *server;
     __block NSData *sharedKey=pairing.pairedSharedKey;
+    __block NSDate *lastTelephonyHeartbeat;
+    __block NSDictionary *lastTelephonyStatus=@{};
     NSDictionary *(^statusSnapshot)(void)=^NSDictionary *{
         NSMutableDictionary *snapshot=[[deviceStatus snapshot] mutableCopy];
         snapshot[@"clientConnected"]=@YES;
+        BOOL telephonyAlive=lastTelephonyHeartbeat && [[NSDate date] timeIntervalSinceDate:lastTelephonyHeartbeat]<5;
+        snapshot[@"telephonyBridgeReady"]=@(telephonyAlive);
+        snapshot[@"callObservationReady"]=telephonyAlive?(lastTelephonyStatus[@"callObservationReady"]?:@NO):@NO;
         return snapshot;
     };
 
@@ -111,6 +120,14 @@ int main(int argc,char **argv) { @autoreleasepool {
         lastIncomingSequence=incoming;
 
         NSError *error=nil;
+        if ([type isEqual:@"diagnosticsRequest"]) {
+            NSUInteger limit=MAX(1,MIN([payload[@"limit"] unsignedIntegerValue]?:200,500));
+            [diagnostics recordComponent:@"daemon" level:@"info" event:@"diagnostics_requested"
+                fields:@{@"limit":@(limit)}];
+            return K7Response(@"diagnosticsPage",@{@"entries":[diagnostics recentEntries:limit],
+                @"telephonyStatus":lastTelephonyStatus?:@{}});
+        }
+
         if ([type isEqual:@"snapshotRequest"]) {
             BOOL hasCall=state.state!=K7CallStateIdle && state.state!=K7CallStateEnded && state.state!=K7CallStateFailed;
             return K7Response(@"snapshot",@{@"call":hasCall?[state snapshot]:[NSNull null],
@@ -170,6 +187,8 @@ int main(int argc,char **argv) { @autoreleasepool {
     NSError *serverError=nil;
     if (![server start:&serverError]) {
         NSLog(@"K7Bridge control server failed: %@",serverError);
+        [diagnostics recordComponent:@"daemon" level:@"error" event:@"control_server_failed"
+            fields:@{@"error":serverError.localizedDescription?:@"unknown"}];
         return 70;
     }
 
@@ -204,11 +223,33 @@ int main(int argc,char **argv) { @autoreleasepool {
     __unused K7BridgeIPC *events=[[K7BridgeIPC alloc] initLocalPort:@"com.k7bridge.gateway"
         handler:^NSDictionary *(NSDictionary *event) {
         NSString *kind=[event[@"type"] isKindOfClass:NSString.class]?event[@"type"]:nil;
+        if ([kind isEqual:@"diagnostic"]) {
+            NSString *component=[event[@"component"] isKindOfClass:NSString.class]?event[@"component"]:@"unknown";
+            NSString *name=[event[@"event"] isKindOfClass:NSString.class]?event[@"event"]:@"unspecified";
+            NSString *level=[event[@"level"] isKindOfClass:NSString.class]?event[@"level"]:@"info";
+            NSDictionary *fields=[event[@"fields"] isKindOfClass:NSDictionary.class]?event[@"fields"]:@{};
+            [diagnostics recordComponent:component level:level event:name fields:fields];
+            return @{@"ok":@YES};
+        }
+        if ([kind isEqual:@"telephonyStatus"]) {
+            NSDictionary *status=[event[@"status"] isKindOfClass:NSDictionary.class]?event[@"status"]:@{};
+            BOOL changed=![status isEqual:lastTelephonyStatus];
+            lastTelephonyHeartbeat=[NSDate date];
+            lastTelephonyStatus=[status copy];
+            if (changed) {
+                [diagnostics recordComponent:@"telephony" level:[status[@"callObservationReady"] boolValue]?@"info":@"warning"
+                    event:@"health_changed" fields:status];
+                [server broadcastType:@"deviceStatus" payload:statusSnapshot()];
+            }
+            return @{@"ok":@YES};
+        }
         NSUUID *identifier=K7UUID(event[@"callId"]);
         if ([kind isEqual:@"incomingCall"]) {
             NSString *handle=[event[@"handle"] isKindOfClass:NSString.class]?event[@"handle"]:@"";
             if (!identifier || ![state beginIncoming:identifier handle:handle error:nil]) return @{@"ok":@NO,@"error":@"invalid incoming call"};
             NSLog(@"K7Bridge registered incoming call %@",identifier.UUIDString);
+            [diagnostics recordComponent:@"call" level:@"info" event:@"incoming_registered"
+                fields:@{@"callId":identifier.UUIDString}];
             if (relay) {
                 [relay sendIncomingCall:@{@"callId":identifier.UUIDString,@"handle":handle,
                     @"displayName":event[@"displayName"]?:@""} sharedKey:sharedKey completion:^(NSError *issue) {
@@ -237,6 +278,8 @@ int main(int argc,char **argv) { @autoreleasepool {
                 });
             } else return @{@"ok":@NO,@"error":@"unsupported call state"};
             NSLog(@"K7Bridge call %@ -> %@",identifier.UUIDString,next);
+            [diagnostics recordComponent:@"call" level:@"info" event:@"state_changed"
+                fields:@{@"callId":identifier.UUIDString,@"state":next?:@"unknown"}];
         } else return @{@"ok":@NO,@"error":@"unsupported event"};
 
         NSMutableDictionary *payload=[event mutableCopy];
@@ -249,5 +292,7 @@ int main(int argc,char **argv) { @autoreleasepool {
         [server broadcastType:@"deviceStatus" payload:statusSnapshot()];
     }];
     NSLog(@"K7Bridge started on WSS port 7443; gateway id %@",pairing.gatewayID);
+    [diagnostics recordComponent:@"daemon" level:@"info" event:@"gateway_ready"
+        fields:@{@"port":@7443,@"gatewayId":pairing.gatewayID?:@"unknown"}];
     [[NSRunLoop currentRunLoop] run];
 } return 0; }

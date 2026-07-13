@@ -106,7 +106,7 @@ try {
     Write-Host "Paket kuruluyor ve gateway yeniden başlatılıyor..."
     $resetCommand = if ($ResetPairing) { "sudo rm -f /var/mobile/Library/K7Bridge/pairing-state.json /var/mobile/Library/K7Bridge/pairing-url.txt && " } else { "" }
     $pairingOutput = if ($ResetPairing) { " && (for n in 1 2 3 4 5 6 7 8 9 10; do [ -s /var/mobile/Library/K7Bridge/pairing-url.txt ] && exit 0; sleep 1; done; exit 1) && echo '--- Yeni eşleştirme metni ---' && sudo cat /var/mobile/Library/K7Bridge/pairing-url.txt" } else { "" }
-    $remoteCommand = "sudo dpkg --install /var/mobile/$($package.Name) && (sudo launchctl bootout system/com.k7bridge.gateway 2>/dev/null || true) && (sudo killall -9 k7bridged 2>/dev/null || true) && ${resetCommand}sleep 2 && sudo launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.k7bridge.gateway.plist && sleep 2 && echo '--- Kurulan gateway ---' && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version' && sudo launchctl print system/com.k7bridge.gateway | grep -E 'state =|last exit code'${pairingOutput}"
+    $remoteCommand = "sudo dpkg --install /var/mobile/$($package.Name) && (sudo launchctl bootout system/com.k7bridge.gateway 2>/dev/null || true) && (sudo killall -9 k7bridged 2>/dev/null || true) && (sudo killall -9 callservicesd 2>/dev/null || true) && ${resetCommand}sleep 2 && sudo launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.k7bridge.gateway.plist && sleep 2 && echo '--- Kurulan gateway ---' && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version' && sudo launchctl print system/com.k7bridge.gateway | grep -E 'state =|last exit code'${pairingOutput}"
     & ssh -t "${DeviceUser}@${DeviceHost}" $remoteCommand
     if ($LASTEXITCODE -ne 0) { throw "Telefondaki kurulum başarısız." }
 

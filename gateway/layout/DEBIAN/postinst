@@ -1,0 +1,14 @@
+#!/bin/sh
+
+if [ "$1" = "configure" ]; then
+    mkdir -p /var/mobile/Library/Logs/K7Bridge
+    chmod 755 /var/mobile/Library/Logs/K7Bridge 2>/dev/null || true
+
+    launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.k7bridge.gateway.plist 2>/dev/null || true
+    launchctl kickstart -k system/com.k7bridge.gateway 2>/dev/null || true
+
+    # ElleKit loads the new telephony dylib when callservicesd is relaunched.
+    killall -9 callservicesd 2>/dev/null || true
+fi
+
+exit 0

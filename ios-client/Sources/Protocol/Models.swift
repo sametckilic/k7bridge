@@ -51,6 +51,29 @@ struct DeviceStatus: Codable, Equatable, Sendable {
     var hotspotEnabled: Bool?
     var clientConnected: Bool?
     var audioGatePassed = false
+    var telephonyBridgeReady: Bool?
+    var callObservationReady: Bool?
+}
+
+struct DiagnosticEntry: Codable, Identifiable, Equatable, Sendable {
+    let timestamp: Date
+    let sequence: UInt64
+    let source: String
+    let level: String
+    let component: String
+    let event: String
+    let fields: [String: String]
+    var id: String { "\(source)-\(sequence)-\(timestamp.timeIntervalSince1970)" }
+}
+
+struct TelephonyBridgeStatus: Codable, Equatable, Sendable {
+    let process: String?
+    let commandPortReady: Bool?
+    let callCenterClassAvailable: Bool?
+    let sharedInstanceAvailable: Bool?
+    let currentCallsAvailable: Bool?
+    let callObservationReady: Bool?
+    let callCount: Int?
 }
 
 struct ControlEnvelope<Payload: Codable & Sendable>: Codable, Sendable {
@@ -78,6 +101,7 @@ struct CallCommand: Codable, Sendable { let callId: UUID }
 struct DialCommand: Codable, Sendable { let callId: UUID; let handle: String }
 struct DTMFCommand: Codable, Sendable { let callId: UUID; let digit: String }
 struct SMSListCommand: Codable, Sendable { let cursor: String?; let limit: Int }
+struct DiagnosticsRequestPayload: Codable, Sendable { let limit: Int }
 struct SMSSendCommand: Codable, Sendable { let smsId: String; let handle: String; let text: String }
 struct HeartbeatPayload: Codable, Sendable { let activeCallId: UUID? }
 struct PairCommand: Codable, Sendable { let clientId: UUID; let clientPublicKey: Data; let oneTimeCode: String }
@@ -90,6 +114,10 @@ struct CallUpdatePayload: Codable, Sendable { let callId: UUID; let state: CallS
 struct SMSPagePayload: Codable, Sendable { let items: [SMSMessage]; let nextCursor: String? }
 struct SMSUpdatePayload: Codable, Sendable { let smsId: String; let state: SMSState; let error: String? }
 struct SnapshotPayload: Codable, Sendable { let call: GatewayCall?; let device: DeviceStatus; let smsCursor: String? }
+struct DiagnosticsPagePayload: Codable, Sendable {
+    let entries: [DiagnosticEntry]
+    let telephonyStatus: TelephonyBridgeStatus?
+}
 
 struct PairingDocument: Codable, Sendable {
     let gatewayId: String

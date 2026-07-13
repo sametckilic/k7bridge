@@ -451,6 +451,41 @@ private struct PairingView: View {
                         }
 
                         K7Card {
+                            VStack(alignment: .leading, spacing: 12) {
+                                K7SectionTitle(title: "Tanı kayıtları",
+                                               subtitle: "Çağrı zincirinin nerede koptuğunu gösterir")
+                                diagnosticStatus("Telephony tweak", value: model.device.telephonyBridgeReady)
+                                diagnosticStatus("Çağrı gözlemcisi", value: model.device.callObservationReady)
+                                if let status = model.telephonyStatus {
+                                    LabeledContent("Çalışan süreç", value: status.process ?? "Bilinmiyor")
+                                    LabeledContent("Görülen çağrı nesnesi", value: String(status.callCount ?? 0))
+                                }
+                                HStack {
+                                    Button(action: model.refreshDiagnostics) {
+                                        Label("Yenile", systemImage: "arrow.clockwise").frame(maxWidth: .infinity, minHeight: 44)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(!model.connection.connected)
+                                    Button(action: model.copyDiagnostics) {
+                                        Label("Tümünü kopyala", systemImage: "doc.on.doc").frame(maxWidth: .infinity, minHeight: 44)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                }
+                                if let notice = model.diagnosticsNotice {
+                                    Text(notice).font(.footnote).foregroundStyle(.secondary)
+                                }
+                                if model.recentDiagnostics.isEmpty {
+                                    Text("Henüz tanı kaydı yok.").font(.footnote).foregroundStyle(.secondary)
+                                } else {
+                                    Divider()
+                                    ForEach(model.recentDiagnostics.prefix(10)) { entry in
+                                        DiagnosticRow(entry: entry)
+                                    }
+                                }
+                            }
+                        }
+
+                        K7Card {
                             VStack(alignment: .leading, spacing: 8) {
                                 Label("Yerel test sürümü", systemImage: "hammer.fill").font(.headline)
                                 Text("Ücretsiz Apple hesabıyla kurulan uygulama 7 günde bir yeniden imzalanır. APNs ve kilit ekranında uzaktan uyandırma bu sürümde kapalıdır.")
@@ -493,6 +528,39 @@ private struct PairingView: View {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-"
         return "K7Bridge \(version) (\(build))"
+    }
+
+    private func diagnosticStatus(_ title: String, value: Bool?) -> some View {
+        HStack {
+            Image(systemName: value == true ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                .foregroundStyle(value == true ? .green : .orange)
+            Text(title)
+            Spacer()
+            Text(value == true ? "Hazır" : value == false ? "Sinyal yok" : "Bilinmiyor")
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct DiagnosticRow: View {
+    let entry: DiagnosticEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("\(entry.source)/\(entry.component)").font(.caption.weight(.semibold))
+                Spacer()
+                Text(entry.timestamp.formatted(date: .omitted, time: .standard))
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            Text(entry.event).font(.caption.monospaced()).foregroundStyle(entry.level == "error" ? .red : .primary)
+            if !entry.fields.isEmpty {
+                Text(entry.fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " · "))
+                    .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+        }
+        .textSelection(.enabled)
     }
 }
 
