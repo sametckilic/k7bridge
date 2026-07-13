@@ -12,6 +12,7 @@ final class CallCoordinator: NSObject, ObservableObject {
     var audioDeactivated: (() -> Void)?
     var onError: ((Error) -> Void)?
     private var incomingCallIDs: Set<UUID> = []
+    private var incomingOriginIDs: Set<UUID> = []
     private var reportedCallIDs: Set<UUID> = []
 
     override init() {
@@ -28,8 +29,9 @@ final class CallCoordinator: NSObject, ObservableObject {
     func reportIncoming(_ call: IncomingCallPayload, completion: @escaping (Error?) -> Void = { _ in }) {
         guard reportedCallIDs.insert(call.callId).inserted else { completion(nil); return }
         incomingCallIDs.insert(call.callId)
+        incomingOriginIDs.insert(call.callId)
         let update = CXCallUpdate()
-        update.remoteHandle = CXHandle(type: .phoneNumber, value: call.handle)
+        update.remoteHandle = callKitHandle(call.handle)
         update.localizedCallerName = call.displayName?.isEmpty == false ? call.displayName : nil
         update.hasVideo = false
         provider.reportNewIncomingCall(with: call.callId, update: update) { [weak self] error in
@@ -73,22 +75,44 @@ final class CallCoordinator: NSObject, ObservableObject {
 
     func reportUpdate(_ update: CallUpdatePayload) {
         switch update.state {
-        case .connecting: provider.reportOutgoingCall(with: update.callId, startedConnectingAt: Date())
-        case .active: provider.reportOutgoingCall(with: update.callId, connectedAt: Date())
+        case .connecting:
+            if !incomingOriginIDs.contains(update.callId) {
+                provider.reportOutgoingCall(with: update.callId, startedConnectingAt: Date())
+            }
+        case .active:
+            if !incomingOriginIDs.contains(update.callId) {
+                provider.reportOutgoingCall(with: update.callId, connectedAt: Date())
+            }
         case .ended:
             provider.reportCall(with: update.callId, endedAt: Date(), reason: .remoteEnded)
-            incomingCallIDs.remove(update.callId); reportedCallIDs.remove(update.callId)
+            incomingCallIDs.remove(update.callId); incomingOriginIDs.remove(update.callId); reportedCallIDs.remove(update.callId)
         case .failed:
             provider.reportCall(with: update.callId, endedAt: Date(), reason: .failed)
-            incomingCallIDs.remove(update.callId); reportedCallIDs.remove(update.callId)
+            incomingCallIDs.remove(update.callId); incomingOriginIDs.remove(update.callId); reportedCallIDs.remove(update.callId)
         default: break
         }
+    }
+
+    func updateCall(_ call: GatewayCall) {
+        let update = CXCallUpdate()
+        update.remoteHandle = callKitHandle(call.handle)
+        update.localizedCallerName = call.displayName
+        update.hasVideo = false
+        provider.reportCall(with: call.id, updated: update)
+    }
+
+    private func callKitHandle(_ value: String) -> CXHandle {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return CXHandle(type: .generic, value: "Gizli numara") }
+        return CXHandle(type: .phoneNumber, value: trimmed)
     }
 }
 
 extension CallCoordinator: CXProviderDelegate {
     nonisolated func providerDidReset(_ provider: CXProvider) {
-        Task { @MainActor in incomingCallIDs.removeAll(); reportedCallIDs.removeAll(); audioDeactivated?() }
+        Task { @MainActor in
+            incomingCallIDs.removeAll(); incomingOriginIDs.removeAll(); reportedCallIDs.removeAll(); audioDeactivated?()
+        }
     }
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
         Task { @MainActor in

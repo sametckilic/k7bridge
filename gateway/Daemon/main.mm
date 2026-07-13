@@ -208,6 +208,7 @@ int main(int argc,char **argv) { @autoreleasepool {
         if ([kind isEqual:@"incomingCall"]) {
             NSString *handle=[event[@"handle"] isKindOfClass:NSString.class]?event[@"handle"]:@"";
             if (!identifier || ![state beginIncoming:identifier handle:handle error:nil]) return @{@"ok":@NO,@"error":@"invalid incoming call"};
+            NSLog(@"K7Bridge registered incoming call %@",identifier.UUIDString);
             if (relay) {
                 [relay sendIncomingCall:@{@"callId":identifier.UUIDString,@"handle":handle,
                     @"displayName":event[@"displayName"]?:@""} sharedKey:sharedKey completion:^(NSError *issue) {
@@ -217,16 +218,25 @@ int main(int argc,char **argv) { @autoreleasepool {
         } else if ([kind isEqual:@"callUpdate"]) {
             if (!identifier || ![identifier isEqual:state.callID]) return @{@"ok":@NO,@"error":@"unknown call"};
             NSString *next=event[@"state"];
-            if ([next isEqual:@"active"]) {
+            if ([next isEqual:@"connecting"]) {
                 if (state.state==K7CallStateIncoming || state.state==K7CallStateDialing)
                     [state transition:K7CallStateConnecting error:nil];
-                [state transition:K7CallStateActive error:nil];
+                else if (state.state!=K7CallStateConnecting)
+                    return @{@"ok":@NO,@"error":@"invalid connecting transition"};
+            } else if ([next isEqual:@"active"]) {
+                if (state.state==K7CallStateIncoming || state.state==K7CallStateDialing)
+                    [state transition:K7CallStateConnecting error:nil];
+                if (state.state==K7CallStateConnecting) [state transition:K7CallStateActive error:nil];
+                else if (state.state!=K7CallStateActive)
+                    return @{@"ok":@NO,@"error":@"invalid active transition"};
             } else if ([next isEqual:@"ended"]) {
-                [state transition:K7CallStateEnded error:nil];
+                if (state.state!=K7CallStateEnded && ![state transition:K7CallStateEnded error:nil])
+                    return @{@"ok":@NO,@"error":@"invalid ended transition"};
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
                     [state transition:K7CallStateIdle error:nil];
                 });
             } else return @{@"ok":@NO,@"error":@"unsupported call state"};
+            NSLog(@"K7Bridge call %@ -> %@",identifier.UUIDString,next);
         } else return @{@"ok":@NO,@"error":@"unsupported event"};
 
         NSMutableDictionary *payload=[event mutableCopy];

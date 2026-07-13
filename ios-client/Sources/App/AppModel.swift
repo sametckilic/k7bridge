@@ -8,7 +8,10 @@ final class AppModel: ObservableObject {
     @Published var messages: [SMSMessage] = []
     @Published var device = DeviceStatus()
     @Published var countryCode: String {
-        didSet { UserDefaults.standard.set(countryCode, forKey: "defaultCountryCode") }
+        didSet {
+            UserDefaults.standard.set(countryCode, forKey: "defaultCountryCode")
+            contacts.updateCountryCode(countryCode)
+        }
     }
     @Published var errorMessage: String?
     @Published var pairing: PairingMaterial?
@@ -19,15 +22,25 @@ final class AppModel: ObservableObject {
     let calls = CallCoordinator()
     let pushes = PushCoordinator()
     let media = MediaEngine()
+    let contacts: ContactDirectory
 
     private var cancellables: Set<AnyCancellable> = []
 
     init() {
-        countryCode = UserDefaults.standard.string(forKey: "defaultCountryCode") ?? "+90"
+        let savedCountryCode = UserDefaults.standard.string(forKey: "defaultCountryCode") ?? "+90"
+        countryCode = savedCountryCode
+        contacts = ContactDirectory(countryCode: savedCountryCode)
         pairing = try? PairingStore.shared.load()
         connection.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        contacts.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+                DispatchQueue.main.async { self?.refreshCurrentCallName() }
+            }
             .store(in: &cancellables)
         connection.onMessage = { [weak self] type, data in self?.handle(type: type, data: data) }
         connection.onReady = { [weak self] in
@@ -44,12 +57,16 @@ final class AppModel: ObservableObject {
         calls.command = { [weak self] type, command in self?.connection.send(type: type, payload: command) }
         calls.onError = { [weak self] error in self?.errorMessage = error.localizedDescription }
         calls.dialCommand = { [weak self] command in
-            self?.call = GatewayCall(id: command.callId, handle: command.handle, displayName: nil, state: .dialing)
+            self?.call = GatewayCall(id: command.callId, handle: command.handle,
+                                     displayName: self?.contacts.name(for: command.handle), state: .dialing)
             self?.connection.send(type: "dial", payload: command)
         }
         calls.audioDeactivated = { [weak self] in self?.media.stop() }
         pushes.onIncomingCall = { [weak self] call, done in
-            self?.calls.reportIncoming(call) { error in
+            let resolved = self?.resolvedIncoming(call) ?? call
+            self?.call = GatewayCall(id: resolved.callId, handle: resolved.handle,
+                                     displayName: resolved.displayName, state: .incoming)
+            self?.calls.reportIncoming(resolved) { error in
                 if let error { self?.errorMessage = error.localizedDescription }
                 done()
             }
@@ -106,6 +123,22 @@ final class AppModel: ObservableObject {
     func answer(_ callID: UUID) { calls.answer(callID) }
     func end(_ callID: UUID) { calls.end(callID) }
 
+    func enableContacts() { contacts.requestAccess() }
+
+    func rememberContact(_ selection: ContactSelection) {
+        contacts.remember(name: selection.name, number: selection.number)
+    }
+
+    func displayName(for number: String) -> String? { contacts.name(for: number) }
+
+    func applicationDidBecomeActive() {
+        contacts.reloadIfAuthorized()
+        if connection.connected { refreshAll() }
+        else if pairing != nil, connection.phase != .connecting, connection.phase != .authenticating {
+            connection.reconnect()
+        }
+    }
+
     @discardableResult
     func sendSMS(handle: String, text: String) -> Bool {
         errorMessage = nil
@@ -136,7 +169,8 @@ final class AppModel: ObservableObject {
         do {
             switch type {
             case "incomingCall":
-                let value = try JSONDecoder.k7.decode(ControlEnvelope<IncomingCallPayload>.self, from: data).payload
+                let raw = try JSONDecoder.k7.decode(ControlEnvelope<IncomingCallPayload>.self, from: data).payload
+                let value = resolvedIncoming(raw)
                 call = GatewayCall(id: value.callId, handle: value.handle, displayName: value.displayName, state: .incoming)
                 calls.reportIncoming(value)
             case "callUpdate":
@@ -151,13 +185,20 @@ final class AppModel: ObservableObject {
                 }
             case "snapshot":
                 let value = try JSONDecoder.k7.decode(ControlEnvelope<SnapshotPayload>.self, from: data).payload
-                let previousCallID = call?.id
+                let previousCall = call
                 call = value.call
+                if let current = call, let name = contacts.name(for: current.handle) {
+                    call?.displayName = name
+                }
                 device = value.device
                 lastStatusUpdate = Date()
-                if value.call?.state == .incoming, value.call?.id != previousCallID, let incoming = value.call {
-                    calls.reportIncoming(IncomingCallPayload(callId: incoming.id, handle: incoming.handle,
-                                                             displayName: incoming.displayName))
+                if let previousCall, value.call?.id != previousCall.id {
+                    calls.reportUpdate(CallUpdatePayload(callId: previousCall.id, state: .ended,
+                                                         reason: "gateway_snapshot"))
+                }
+                if value.call?.state == .incoming, value.call?.id != previousCall?.id, let incoming = value.call {
+                    calls.reportIncoming(resolvedIncoming(IncomingCallPayload(callId: incoming.id,
+                        handle: incoming.handle, displayName: incoming.displayName)))
                 }
             case "smsPage":
                 let value = try JSONDecoder.k7.decode(ControlEnvelope<SMSPagePayload>.self, from: data).payload
@@ -179,6 +220,19 @@ final class AppModel: ObservableObject {
         } catch {
             errorMessage = "Gateway cevabı okunamadı: \(error.localizedDescription)"
         }
+    }
+
+    private func resolvedIncoming(_ value: IncomingCallPayload) -> IncomingCallPayload {
+        let existing = value.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = contacts.name(for: value.handle) ?? (existing?.isEmpty == false ? existing : nil)
+        return IncomingCallPayload(callId: value.callId, handle: value.handle, displayName: name)
+    }
+
+    private func refreshCurrentCallName() {
+        guard var current = call, let name = contacts.name(for: current.handle), current.displayName != name else { return }
+        current.displayName = name
+        call = current
+        calls.updateCall(current)
     }
 
     private func registerPushToken(_ token: String) async {

@@ -7,8 +7,8 @@ settings:
   base:
     SWIFT_VERSION: 5.0
     SWIFT_STRICT_CONCURRENCY: minimal
-    CURRENT_PROJECT_VERSION: 5
-    MARKETING_VERSION: 0.2.2
+    CURRENT_PROJECT_VERSION: 6
+    MARKETING_VERSION: 0.3.0
 targets:
   K7Bridge:
     type: application
@@ -29,6 +29,7 @@ targets:
             CFBundleURLSchemes: [k7bridge]
         UILaunchScreen: {}
         NSCameraUsageDescription: Gateway eşleştirme QR kodunu taramak için kamera kullanılır.
+        NSContactsUsageDescription: Arayan kişilerin adını göstermek ve rehberden numara seçmek için rehber kullanılır.
         NSLocalNetworkUsageDescription: GSM gateway ile çağrı, ses, SMS ve durum verisi alışverişi yapılır.
         NSBonjourServices: [_k7bridge._tcp]
         UIBackgroundModes: [voip, audio, remote-notification]
@@ -43,8 +44,8 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: 5
-        MARKETING_VERSION: 0.2.2
+        CURRENT_PROJECT_VERSION: 6
+        MARKETING_VERSION: 0.3.0
     scheme:
       testTargets: [K7BridgeTests]
   K7BridgeTests:

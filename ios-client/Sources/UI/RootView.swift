@@ -27,6 +27,7 @@ struct RootView: View {
 private struct CallsView: View {
     @EnvironmentObject private var model: AppModel
     @State private var number = ""
+    @State private var showingContactPicker = false
 
     var body: some View {
         NavigationStack {
@@ -64,6 +65,25 @@ private struct CallsView: View {
                                     .tint(.green)
                                     .disabled(number.isEmpty || !model.connection.connected)
                                 }
+                                HStack(spacing: 12) {
+                                    Button {
+                                        UIApplication.shared.k7DismissKeyboard()
+                                        showingContactPicker = true
+                                    } label: {
+                                        Label("Rehberden seç", systemImage: "person.crop.circle.badge.plus")
+                                            .frame(maxWidth: .infinity, minHeight: 44)
+                                    }
+                                    .buttonStyle(.bordered)
+
+                                    Button(action: model.enableContacts) {
+                                        Label(model.contacts.state.title,
+                                              systemImage: model.contacts.state.canResolveNames
+                                              ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.questionmark")
+                                            .frame(maxWidth: .infinity, minHeight: 44)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(model.contacts.state == .requesting || model.contacts.state == .loading)
+                                }
                             }
                         }
 
@@ -78,6 +98,17 @@ private struct CallsView: View {
                                        symbol: model.device.charging == true ? "battery.100percent.bolt" : "battery.75percent",
                                        tint: model.device.charging == true ? .green : .blue)
                         }
+
+                        Label(model.connection.connected
+                              ? "Gelen çağrı izleme hazır. Bu yerel sürümde uygulamayı tamamen kapatmayın."
+                              : "Gelen çağrının yeni telefonda görünmesi için gateway bağlantısı açık olmalı.",
+                              systemImage: model.connection.connected ? "phone.connection.fill" : "phone.down.waves.left.and.right")
+                            .font(.subheadline)
+                            .foregroundStyle(model.connection.connected ? .green : .orange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(18)
+                            .background((model.connection.connected ? Color.green : Color.orange).opacity(0.10),
+                                        in: RoundedRectangle(cornerRadius: 22, style: .continuous))
 
                         Label(model.device.audioGatePassed
                               ? "Ses fizibilite testi geçmiş; ancak PCM/Opus aktarımı bu build'e henüz bağlanmadı."
@@ -97,6 +128,16 @@ private struct CallsView: View {
                 .k7KeyboardDismissal()
             }
             .navigationTitle("K7Bridge")
+            .sheet(isPresented: $showingContactPicker) {
+                ContactPickerView { selection in
+                    number = selection.number
+                    model.rememberContact(selection)
+                    showingContactPicker = false
+                } onCancel: {
+                    showingContactPicker = false
+                }
+                .ignoresSafeArea()
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: model.refreshAll) { Image(systemName: "arrow.clockwise") }
@@ -123,7 +164,12 @@ private struct ActiveCallCard: View {
                     .font(.system(size: 76))
                     .foregroundStyle(.indigo)
                 VStack(spacing: 6) {
-                    Text(call.displayName ?? call.handle).font(.title.bold())
+                    Text(call.displayName?.isEmpty == false ? call.displayName! : (call.handle.isEmpty ? "Gizli numara" : call.handle))
+                        .font(.title.bold())
+                        .multilineTextAlignment(.center)
+                    if let name = call.displayName, !name.isEmpty, !call.handle.isEmpty {
+                        Text(call.handle).font(.body.monospacedDigit()).foregroundStyle(.secondary)
+                    }
                     Text(call.state.turkishTitle).font(.body).foregroundStyle(.secondary)
                 }
                 if call.state == .active {
@@ -227,13 +273,19 @@ private struct MessagesView: View {
 }
 
 private struct MessageRow: View {
+    @EnvironmentObject private var model: AppModel
     let message: SMSMessage
 
     var body: some View {
         K7Card {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text(message.handle).font(.title3.bold())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.displayName(for: message.handle) ?? message.handle).font(.title3.bold())
+                        if model.displayName(for: message.handle) != nil {
+                            Text(message.handle).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        }
+                    }
                     Spacer()
                     Text(message.state.turkishTitle)
                         .font(.caption.weight(.medium))

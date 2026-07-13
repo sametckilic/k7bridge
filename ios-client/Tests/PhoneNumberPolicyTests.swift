@@ -33,4 +33,11 @@ final class PhoneNumberPolicyTests: XCTestCase {
         XCTAssertTrue(ConnectionPhase.online.isOnline)
         XCTAssertEqual(ConnectionPhase.authenticating.title, "Güvenli bağlantı kuruluyor")
     }
+
+    func testContactNumbersMatchAcrossTurkishFormats() {
+        let local = Set(ContactNumberMatcher.keys(for: "0555 111 22 33"))
+        let international = Set(ContactNumberMatcher.keys(for: "+90 555 111 22 33"))
+        XCTAssertFalse(local.intersection(international).isEmpty)
+        XCTAssertTrue(local.contains("5551112233"))
+    }
 }

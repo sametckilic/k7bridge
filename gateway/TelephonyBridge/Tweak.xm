@@ -21,15 +21,20 @@ static id K7Value(id value,NSString *key) {
     @catch(NSException *exception) { return nil; }
 }
 
-static void K7Emit(NSDictionary *event) {
+static BOOL K7Emit(NSDictionary *event) {
     NSDictionary *reply=[K7BridgeIPC send:event toPort:@"com.k7bridge.gateway" timeout:1];
-    if (![reply[@"ok"] boolValue]) NSLog(@"K7TelephonyBridge event rejected: %@",reply[@"error"]?:@"gateway unavailable");
+    BOOL accepted=[reply[@"ok"] boolValue];
+    if (!accepted) NSLog(@"K7TelephonyBridge event rejected: %@",reply[@"error"]?:@"gateway unavailable");
+    return accepted;
 }
 
 @interface K7CallObserver:NSObject
 @property(nonatomic,strong) NSUUID *lastCallID;
 @property(nonatomic,strong) id observedCall;
+@property(nonatomic,copy) NSString *lastEmittedState;
+@property(nonatomic,strong) NSDate *pendingDialDeadline;
 - (void)refresh;
+- (void)beginDial:(NSUUID *)callID;
 @end
 
 static K7CallObserver *K7Observer;
@@ -40,18 +45,38 @@ static K7CallObserver *K7Observer;
     [self refresh];
 }
 
+- (void)emitState:(NSString *)state {
+    if (!self.lastCallID || !state.length || [self.lastEmittedState isEqual:state]) return;
+    if (K7Emit(@{ @"type":@"callUpdate", @"callId":self.lastCallID.UUIDString, @"state":state })) {
+        self.lastEmittedState=state;
+        NSLog(@"K7TelephonyBridge call %@ -> %@",self.lastCallID.UUIDString,state);
+    }
+}
+
+- (void)beginDial:(NSUUID *)callID {
+    self.lastCallID=callID;
+    self.lastEmittedState=@"dialing";
+    self.pendingDialDeadline=[NSDate dateWithTimeIntervalSinceNow:5];
+    NSLog(@"K7TelephonyBridge dial requested for call %@",callID.UUIDString);
+}
+
 - (void)refresh {
     id call=K7FirstCall();
     if (!call) {
-        if (self.lastCallID) K7Emit(@{@"type":@"callUpdate",@"callId":self.lastCallID.UUIDString,@"state":@"ended"});
+        if (self.pendingDialDeadline && [self.pendingDialDeadline timeIntervalSinceNow]>0) return;
+        [self emitState:@"ended"];
         if (self.observedCall) {
             @try { [self.observedCall removeObserver:self forKeyPath:@"status"]; }
             @catch(NSException *exception) {}
         }
         self.observedCall=nil;
         self.lastCallID=nil;
+        self.lastEmittedState=nil;
+        self.pendingDialDeadline=nil;
         return;
     }
+
+    self.pendingDialDeadline=nil;
 
     if (self.observedCall!=call) {
         if (self.observedCall) {
@@ -63,23 +88,34 @@ static K7CallObserver *K7Observer;
         @catch(NSException *exception) { NSLog(@"K7TelephonyBridge call status observation unavailable: %@",exception); }
     }
 
+    BOOL incoming=[K7Value(call,@"incoming") boolValue]||[K7Value(call,@"isIncoming") boolValue];
+    if (incoming) {
+        if (!self.lastCallID) {
+            NSString *identifier=[K7Value(call,@"uniqueProxyIdentifier") description];
+            NSUUID *callID=[[NSUUID alloc] initWithUUIDString:identifier];
+            self.lastCallID=callID?:[NSUUID UUID];
+            NSLog(@"K7TelephonyBridge discovered incoming call %@",self.lastCallID.UUIDString);
+        }
+        if (![self.lastEmittedState isEqual:@"incoming"]) {
+            NSString *handle=[K7Value(call,@"destinationID") description]?:[K7Value(call,@"displayName") description]?:@"";
+            if ([handle isEqual:@"(null)"]) handle=@"";
+            if (K7Emit(@{ @"type":@"incomingCall", @"callId":self.lastCallID.UUIDString,
+                @"handle":handle, @"displayName":@"" })) self.lastEmittedState=@"incoming";
+        }
+    }
+
     BOOL connected=[K7Value(call,@"connected") boolValue]||[K7Value(call,@"isConnected") boolValue];
     BOOL disconnected=[K7Value(call,@"disconnected") boolValue]||[K7Value(call,@"isDisconnected") boolValue];
-    if (self.lastCallID && (connected||disconnected)) {
-        K7Emit(@{@"type":@"callUpdate",@"callId":self.lastCallID.UUIDString,
-            @"state":connected?@"active":@"ended"});
-        if (disconnected) self.lastCallID=nil;
+    if (disconnected) {
+        [self emitState:@"ended"];
+        return;
+    }
+    if (connected && self.lastCallID) {
+        [self emitState:@"active"];
         return;
     }
 
-    BOOL incoming=[K7Value(call,@"incoming") boolValue]||[K7Value(call,@"isIncoming") boolValue];
-    if (!incoming || self.lastCallID) return;
-    NSString *identifier=[K7Value(call,@"uniqueProxyIdentifier") description];
-    NSUUID *callID=[[NSUUID alloc] initWithUUIDString:identifier];
-    if (!callID) callID=[NSUUID UUID];
-    self.lastCallID=callID;
-    NSString *handle=[K7Value(call,@"destinationID") description]?:[K7Value(call,@"displayName") description]?:@"";
-    K7Emit(@{@"type":@"incomingCall",@"callId":callID.UUIDString,@"handle":handle,@"displayName":@""});
+    if (self.lastCallID && !incoming) [self emitState:@"connecting"];
 }
 @end
 
@@ -125,7 +161,7 @@ static NSDictionary *K7Handle(NSDictionary *command) {
                 return @{@"ok":@NO,@"error":@"dial selector or arguments unavailable"};
             id request=[requestClass new];
             [request setValue:handle forKey:@"dialString"];
-            K7Observer.lastCallID=callID;
+            [K7Observer beginDial:callID];
             ((void(*)(id,SEL,id))objc_msgSend)(center,dial,request);
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW,500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{ [K7Observer refresh]; });
             return @{@"ok":@YES};
@@ -140,6 +176,11 @@ static NSDictionary *K7Handle(NSDictionary *command) {
         ((void(*)(id,SEL))objc_msgSend)(call,selector);
         return @{@"ok":@YES};
     } @catch(NSException *exception) {
+        if ([type isEqual:@"dial"]) {
+            K7Observer.lastCallID=nil;
+            K7Observer.lastEmittedState=nil;
+            K7Observer.pendingDialDeadline=nil;
+        }
         return @{@"ok":@NO,@"error":exception.reason?:@"telephony invocation failed"};
     }
 }
@@ -157,5 +198,7 @@ static NSDictionary *K7Handle(NSDictionary *command) {
     } @catch(NSException *exception) {
         NSLog(@"K7TelephonyBridge currentCalls observation unavailable: %@",exception);
     }
-    NSLog(@"K7TelephonyBridge loaded; runtime selectors will be device-verified before use");
+    [NSTimer scheduledTimerWithTimeInterval:0.5 target:K7Observer selector:@selector(refresh)
+        userInfo:nil repeats:YES];
+    NSLog(@"K7TelephonyBridge loaded with KVO and 500 ms polling fallback");
 } }
