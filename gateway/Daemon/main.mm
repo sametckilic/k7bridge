@@ -25,10 +25,10 @@ int main(int argc,char **argv){ @autoreleasepool {
         if([type isEqual:@"pair"]){NSData *clientKey=[[NSData alloc]initWithBase64EncodedString:payload[@"clientPublicKey"] options:0];BOOL ok=[pairing consumeCode:payload[@"oneTimeCode"] clientPublicKey:clientKey sharedKey:&sharedKey];return envelope(ok?@"pairResult":@"error",ok?@{@"gatewayId":pairing.gatewayID}:@{@"code":@"pair_failed",@"message":@"Pairing code is invalid or already consumed"});}
         uint64_t incoming=[message[@"sequence"]unsignedLongLongValue];NSString *auth=message[@"auth"];
         NSData *canonical=[NSJSONSerialization dataWithJSONObject:payload options:NSJSONWritingSortedKeys error:nil];
-        unsigned char digest[crypto_hash_sha256_BYTES];crypto_hash_sha256(digest,canonical.bytes,canonical.length);
+        unsigned char digest[crypto_hash_sha256_BYTES];crypto_hash_sha256(digest,(const unsigned char *)canonical.bytes,canonical.length);
         NSMutableString *hex=[NSMutableString string];for(size_t i=0;i<sizeof(digest);i++)[hex appendFormat:@"%02x",digest[i]];
         NSString *signing=[NSString stringWithFormat:@"%@|%@|%llu|%@",type,message[@"messageId"],incoming,hex];unsigned char tag[crypto_auth_hmacsha256_BYTES];
-        if(sharedKey){crypto_auth_hmacsha256_state h;crypto_auth_hmacsha256_init(&h,sharedKey.bytes,sharedKey.length);NSData *signData=[signing dataUsingEncoding:NSUTF8StringEncoding];crypto_auth_hmacsha256_update(&h,signData.bytes,signData.length);crypto_auth_hmacsha256_final(&h,tag);}
+        if(sharedKey){crypto_auth_hmacsha256_state h;crypto_auth_hmacsha256_init(&h,(const unsigned char *)sharedKey.bytes,sharedKey.length);NSData *signData=[signing dataUsingEncoding:NSUTF8StringEncoding];crypto_auth_hmacsha256_update(&h,(const unsigned char *)signData.bytes,signData.length);crypto_auth_hmacsha256_final(&h,tag);}
         NSString *expected=sharedKey?[[NSData dataWithBytes:tag length:sizeof(tag)]base64EncodedStringWithOptions:0]:nil;
         if(!sharedKey||incoming<=lastIncomingSequence||![auth isEqual:expected])return envelope(@"error",@{@"code":@"unauthorized",@"message":@"Authentication or sequence check failed"});lastIncomingSequence=incoming;
         if([type isEqual:@"snapshotRequest"])return envelope(@"snapshot",@{@"call":state.callID?[state snapshot]:[NSNull null],@"device":[deviceStatus snapshot],@"smsCursor":[NSNull null]});

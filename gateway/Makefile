@@ -9,7 +9,7 @@ TOOL_NAME = k7bridged
 k7bridged_FILES = Daemon/main.mm Daemon/StateMachine.mm Daemon/SMSStore.mm Daemon/Pairing.mm Daemon/ControlServer.mm Daemon/RelayClient.mm Daemon/DeviceStatus.mm Shared/BridgeIPC.mm
 k7bridged_FRAMEWORKS = Foundation CoreTelephony Network Security UIKit
 k7bridged_LIBRARIES = sqlite3 sodium
-k7bridged_CFLAGS = -fobjc-arc -IHeaders -Wno-nullability-completeness
+k7bridged_CFLAGS = -fobjc-arc -IHeaders -Wno-nullability-completeness -Wno-module-import-in-extern-c
 k7bridged_CODESIGN_FLAGS = -Sentitlements.plist
 k7bridged_INSTALL_PATH = /usr/local/libexec
 
