@@ -1,5 +1,16 @@
 # K7Bridge
 
+## Tek komutla gateway dağıtımı
+
+En güncel commit'in başarılı gateway artifact'ını indirip eski iPhone'a kurmak için:
+
+```powershell
+.\scripts\deploy-gateway.ps1
+```
+
+Farklı bir cihaz adresi kullanılacaksa `-DeviceHost` parametresi verilebilir. Script mevcut GitHub
+kimlik bilgisini yalnız artifact indirmek için bellekte kullanır ve SSH/sudo parolalarını saklamaz.
+
 K7Bridge turns a jailbroken iPhone 7 into a single-SIM GSM gateway for a modern,
 non-jailbroken iPhone. The repository contains four independently testable parts:
 
