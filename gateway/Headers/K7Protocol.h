@@ -5,7 +5,7 @@ typedef NS_ENUM(NSInteger, K7CallState) {
     K7CallStateConnecting, K7CallStateActive, K7CallStateEnded, K7CallStateFailed
 };
 
-static NSString *K7StateString(K7CallState state) {
+static inline NSString *K7StateString(K7CallState state) {
     switch (state) {
         case K7CallStateIncoming: return @"incoming"; case K7CallStateDialing: return @"dialing";
         case K7CallStateConnecting: return @"connecting"; case K7CallStateActive: return @"active";
@@ -13,4 +13,3 @@ static NSString *K7StateString(K7CallState state) {
         default: return @"idle";
     }
 }
-
