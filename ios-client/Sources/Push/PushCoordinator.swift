@@ -1,4 +1,13 @@
 import Foundation
+#if K7_LOCAL_ONLY
+
+@MainActor
+final class PushCoordinator {
+    var onToken: ((String) -> Void)?
+    var onIncomingCall: ((IncomingCallPayload, @escaping () -> Void) -> Void)?
+}
+
+#else
 import PushKit
 
 @MainActor
@@ -31,4 +40,4 @@ final class PushCoordinator: NSObject, PKPushRegistryDelegate {
         }
     }
 }
-
+#endif

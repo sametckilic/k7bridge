@@ -1,0 +1,42 @@
+name: Local sideload IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "ios-client/**"
+      - ".github/workflows/sideload.yml"
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate
+        working-directory: ios-client
+      - name: Build unsigned local-only app
+        working-directory: ios-client
+        run: |
+          xcodebuild \
+            -project K7Bridge.xcodeproj \
+            -scheme K7Bridge \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/K7DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS=K7_LOCAL_ONLY \
+            build
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$RUNNER_TEMP/K7DerivedData/Build/Products/Release-iphoneos/K7Bridge.app" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          ditto -c -k --sequesterRsrc --keepParent Payload K7Bridge-local-unsigned.ipa
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: K7Bridge-local-unsigned
+          path: ${{ runner.temp }}/K7Bridge-local-unsigned.ipa
+          if-no-files-found: error
