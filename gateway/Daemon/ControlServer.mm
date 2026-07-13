@@ -19,7 +19,9 @@
     nw_protocol_stack_prepend_application_protocol(stack,websocket);
     NSString *portString=[@(_port) stringValue]; _listener=nw_listener_create_with_port(portString.UTF8String,parameters);
     if (!_listener) { if(error)*error=[NSError errorWithDomain:@"K7Network" code:1 userInfo:@{NSLocalizedDescriptionKey:@"listener creation failed"}]; return NO; }
-    nw_listener_set_queue(_listener,_queue);nw_listener_set_service(_listener,"K7Bridge","_k7bridge._tcp",NULL);
+    nw_listener_set_queue(_listener,_queue);
+    nw_advertise_descriptor_t service=nw_advertise_descriptor_create_bonjour_service("K7Bridge","_k7bridge._tcp",NULL);
+    nw_listener_set_advertise_descriptor(_listener,service);
     __weak typeof(self) weakSelf=self;
     nw_listener_set_new_connection_handler(_listener,^(nw_connection_t connection){ [weakSelf accept:connection]; });
     nw_listener_set_state_changed_handler(_listener,^(nw_listener_state_t state,nw_error_t issue){ if(state==nw_listener_state_failed) NSLog(@"K7Bridge listener failed: %s",nw_error_get_error_domain(issue)==nw_error_domain_posix?strerror(nw_error_get_error_code(issue)):"network error"); });
@@ -27,7 +29,11 @@
 }
 - (void)accept:(nw_connection_t)connection {
     [_connections addObject:connection]; nw_connection_set_queue(connection,_queue);
-    __weak typeof(self) weakSelf=self; nw_connection_set_state_changed_handler(connection,^(nw_connection_state_t state,nw_error_t error){ if(state==nw_connection_state_ready)[weakSelf receive:connection]; if(state==nw_connection_state_failed||state==nw_connection_state_cancelled)[weakSelf->_connections removeObject:connection]; });
+    __weak typeof(self) weakSelf=self; nw_connection_set_state_changed_handler(connection,^(nw_connection_state_t state,nw_error_t error){
+        __strong typeof(weakSelf) strongSelf=weakSelf; if(!strongSelf)return;
+        if(state==nw_connection_state_ready)[strongSelf receive:connection];
+        if(state==nw_connection_state_failed||state==nw_connection_state_cancelled)[strongSelf->_connections removeObject:connection];
+    });
     nw_connection_start(connection);
 }
 - (void)receive:(nw_connection_t)connection {
