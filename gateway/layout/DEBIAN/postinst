@@ -7,8 +7,9 @@ if [ "$1" = "configure" ]; then
     launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.k7bridge.gateway.plist 2>/dev/null || true
     launchctl kickstart -k system/com.k7bridge.gateway 2>/dev/null || true
 
-    # iOS 15.7.5 on the target iPhone hosts TUCallCenter in InCallService.
-    killall -9 InCallService 2>/dev/null || true
+    # Runtime tracing on the target iPhone 7/iOS 15.7.5 identified MobilePhone
+    # as the active cellular call UI process.
+    killall -9 MobilePhone 2>/dev/null || true
 fi
 
 exit 0
