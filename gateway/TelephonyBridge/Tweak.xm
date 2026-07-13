@@ -5,6 +5,7 @@
 
 static BOOL K7CommandPortReady=NO;
 static NSDictionary *K7LastHealth;
+static K7BridgeIPC *K7IPC;
 
 static void K7Diagnostic(NSString *event,NSString *level,NSDictionary *fields) {
     [K7BridgeIPC send:@{ @"type":@"diagnostic", @"component":@"telephony",
@@ -235,12 +236,11 @@ static NSDictionary *K7Handle(NSDictionary *command) {
     }
 }
 
-%ctor { @autoreleasepool {
-    static K7BridgeIPC *ipc;
-    ipc=[[K7BridgeIPC alloc] initLocalPort:@"com.k7bridge.telephony"
+static void K7StartBridge(void) {
+    if (K7Observer) return;
+    K7IPC=[[K7BridgeIPC alloc] initLocalPort:@"com.k7bridge.telephony"
         handler:^NSDictionary *(NSDictionary *message) { return K7Handle(message); }];
-    K7CommandPortReady=ipc!=nil;
-    (void)ipc;
+    K7CommandPortReady=K7IPC!=nil;
     K7Observer=[K7CallObserver new];
     id center=K7CallCenter();
     @try {
@@ -257,4 +257,13 @@ static NSDictionary *K7Handle(NSDictionary *command) {
     NSLog(@"K7TelephonyBridge loaded with KVO and 500 ms polling fallback");
     K7Diagnostic(@"tweak_loaded",@"info",@{@"process":NSProcessInfo.processInfo.processName?:@"unknown",
         @"commandPortReady":@(K7CommandPortReady)});
+}
+
+%ctor { @autoreleasepool {
+    // Do not touch TelephonyUtilities while dyld is still constructing MobilePhone.
+    // Initializing synchronously here can deadlock the app before its run loop starts.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
+            dispatch_get_main_queue(), ^{ K7StartBridge(); });
+    });
 } }
