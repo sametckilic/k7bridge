@@ -1,0 +1,11 @@
+{
+  "deviceBuild": "iPhone9,3 / iOS 15.x (BUILD)",
+  "hookArtifactSHA256": "REPLACE_WITH_64_HEX_DIGITS",
+  "durationSeconds": 0,
+  "downlinkCaptured": false,
+  "uplinkReplaced": false,
+  "remotePartyHeardInjectedAudio": false,
+  "noProcessCrash": false,
+  "notes": ""
+}
+

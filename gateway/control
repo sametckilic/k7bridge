@@ -1,0 +1,9 @@
+Package: com.example.k7bridge.gateway
+Name: K7Bridge Gateway
+Version: 0.1.0
+Architecture: iphoneos-arm64
+Description: GSM call, SMS and status gateway for a paired iOS client.
+Maintainer: K7Bridge
+Author: K7Bridge
+Section: Utilities
+Depends: firmware (>= 15.0), ellekit, libsodium23

@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: k7bridge-relay
+    runtime: node
+    plan: starter
+    rootDir: relay
+    buildCommand: ""
+    startCommand: npm start
+    healthCheckPath: /healthz
+    disk:
+      name: registrations
+      mountPath: /var/data/k7bridge
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: DATA_FILE
+        value: /var/data/k7bridge/registrations.json
+      - key: APNS_TEAM_ID
+        sync: false
+      - key: APNS_KEY_ID
+        sync: false
+      - key: APNS_PRIVATE_KEY_BASE64
+        sync: false
+      - key: ALLOWED_BUNDLE_ID
+        sync: false
+      - key: APNS_ENVIRONMENT
+        value: production
+

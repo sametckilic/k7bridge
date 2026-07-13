@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.k7bridge.gateway</string>
+  <key>ProgramArguments</key><array><string>/var/jb/usr/local/libexec/k7bridged</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>/var/mobile/Library/Logs/K7Bridge.log</string>
+  <key>StandardErrorPath</key><string>/var/mobile/Library/Logs/K7Bridge.log</string>
+</dict></plist>
+

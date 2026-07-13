@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "type": "incomingCall",
+  "messageId": "8A1A146B-5BE7-47AB-8AA6-9E59EE075E70",
+  "sequence": 1,
+  "sentAt": "2026-07-12T12:00:00.000Z",
+  "payload": {
+    "callId": "0D8A7662-CB71-42D7-A72B-3DF22B774F93",
+    "handle": "+905551112233",
+    "displayName": ""
+  }
+}
+

@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+DerivedData/
+ios-client/K7Bridge.xcodeproj/
+gateway/.theos/
+gateway/packages/
+relay/data/
+.k7bridge-identity/
+*.p8
+*.p12
+*.mobileprovision
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+

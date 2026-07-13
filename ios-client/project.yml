@@ -1,0 +1,33 @@
+name: K7Bridge
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "18.0"
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+targets:
+  K7Bridge:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    info:
+      path: Resources/Info.plist
+    entitlements:
+      path: Resources/K7Bridge.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.K7Bridge
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+    scheme:
+      testTargets: [K7BridgeTests]
+  K7BridgeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    dependencies:
+      - target: K7Bridge
+
