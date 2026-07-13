@@ -47,7 +47,14 @@
         [weakSelf send:reply to:connection]; [weakSelf receive:connection];
     });
 }
-- (void)send:(NSDictionary *)message to:(nw_connection_t)connection { NSData *data=[NSJSONSerialization dataWithJSONObject:message?:@{} options:0 error:nil]; dispatch_data_t content=dispatch_data_create(data.bytes,data.length,_queue,DISPATCH_DATA_DESTRUCTOR_DEFAULT); nw_connection_send(connection,content,NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT,true,^(nw_error_t error){}); }
+- (void)send:(NSDictionary *)message to:(nw_connection_t)connection {
+    NSData *data=[NSJSONSerialization dataWithJSONObject:message?:@{} options:0 error:nil];
+    dispatch_data_t content=dispatch_data_create(data.bytes,data.length,_queue,^{(void)data;});
+    nw_content_context_t context=nw_content_context_create("k7bridge.websocket");
+    nw_protocol_metadata_t metadata=nw_ws_create_metadata(nw_ws_opcode_binary);
+    nw_content_context_set_metadata_for_protocol(context,metadata);
+    nw_connection_send(connection,content,context,true,^(nw_error_t error){if(error)NSLog(@"K7Bridge control send failed: %d",nw_error_get_error_code(error));});
+}
 - (void)broadcast:(NSDictionary *)message { dispatch_async(_queue,^{ for(id connection in self->_connections)[self send:message to:(nw_connection_t)connection]; }); }
 - (SecIdentityRef)identity:(NSError **)error {
     CFArrayRef imported=NULL; NSDictionary *options=@{(__bridge id)kSecImportExportPassphrase:_password};
