@@ -55,6 +55,7 @@ $repo = $Matches.repo
 $branch = (& $git branch --show-current).Trim()
 if (-not $branch) { $branch = "main" }
 $head = (& $git rev-parse HEAD).Trim()
+$gatewayHead = (& $git log -1 --format=%H -- gateway .github/workflows/gateway.yml).Trim()
 $changes = & $git status --porcelain
 if ($changes) { throw "Çalışma klasöründe commit edilmemiş değişiklik var. Önce commit ve push yapın." }
 $remoteLine = (& $git ls-remote origin "refs/heads/$branch" | Select-Object -First 1)
@@ -68,7 +69,7 @@ $run = $null
 Write-Host "En güncel gateway build bekleniyor..."
 do {
     $response = Invoke-GitHubApi "$api/actions/workflows/$Workflow/runs?branch=$branch&per_page=10" $token
-    $run = $response.workflow_runs | Where-Object { $_.head_sha -eq $head } | Sort-Object created_at -Descending | Select-Object -First 1
+    $run = $response.workflow_runs | Where-Object { $_.head_sha -eq $gatewayHead } | Sort-Object created_at -Descending | Select-Object -First 1
     if ($run -and $run.status -eq "completed") { break }
     if ((Get-Date) -ge $deadline) { throw "Gateway build $WaitMinutes dakika içinde tamamlanmadı." }
     Start-Sleep -Seconds 5
