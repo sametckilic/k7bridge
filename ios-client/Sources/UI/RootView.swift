@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
@@ -11,6 +12,9 @@ struct RootView: View {
             PairingView().tabItem { Label("Ayarlar", systemImage: "gearshape.fill") }
         }
         .tint(.indigo)
+        .controlSize(.large)
+        .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
@@ -29,7 +33,7 @@ private struct CallsView: View {
             ZStack {
                 K7Background()
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(spacing: 20) {
                         ConnectionHero(phase: model.connection.phase,
                                        detail: model.connection.lastError,
                                        retry: model.connection.reconnect)
@@ -38,21 +42,22 @@ private struct CallsView: View {
                             VStack(alignment: .leading, spacing: 16) {
                                 K7SectionTitle(title: "SIM üzerinden ara",
                                                subtitle: "Arama eski iPhone'daki fiziksel SIM ile yapılır")
-                                HStack(spacing: 10) {
+                                HStack(spacing: 12) {
                                     TextField("05xx xxx xx xx", text: $number)
                                         .keyboardType(.phonePad)
                                         .textContentType(.telephoneNumber)
-                                        .font(.title3.monospacedDigit())
-                                        .padding(.horizontal, 14)
-                                        .frame(height: 52)
+                                        .font(.title2.monospacedDigit().weight(.semibold))
+                                        .padding(.horizontal, 18)
+                                        .frame(height: 64)
                                         .background(Color(uiColor: .secondarySystemGroupedBackground),
-                                                    in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                                                    in: RoundedRectangle(cornerRadius: 19, style: .continuous))
                                     Button {
                                         model.dial(number)
+                                        UIApplication.shared.k7DismissKeyboard()
                                     } label: {
                                         Image(systemName: "phone.fill")
-                                            .font(.title3)
-                                            .frame(width: 30, height: 30)
+                                            .font(.title2)
+                                            .frame(width: 38, height: 38)
                                     }
                                     .buttonStyle(.borderedProminent)
                                     .buttonBorderShape(.circle)
@@ -66,7 +71,7 @@ private struct CallsView: View {
                             ActiveCallCard(call: call)
                         }
 
-                        HStack(spacing: 12) {
+                        HStack(spacing: 14) {
                             MetricTile(title: "Operatör", value: model.device.carrier ?? "Bilinmiyor",
                                        symbol: "simcard.fill", tint: .indigo)
                             MetricTile(title: "Gateway pili", value: batteryText(model.device.batteryLevel),
@@ -78,15 +83,18 @@ private struct CallsView: View {
                               ? "Ses fizibilite testi geçmiş; ancak PCM/Opus aktarımı bu build'e henüz bağlanmadı."
                               : "Çağrı kontrolü denenebilir; çift yönlü görüşme sesi henüz hazır değil.",
                               systemImage: "waveform.badge.exclamationmark")
-                            .font(.footnote)
+                            .font(.subheadline)
                             .foregroundStyle(.orange)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(16)
+                            .padding(18)
                             .background(Color.orange.opacity(0.10),
-                                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                        in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                     }
-                    .padding(16)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 10)
+                    .padding(.bottom, 34)
                 }
+                .k7KeyboardDismissal()
             }
             .navigationTitle("K7Bridge")
             .toolbar {
@@ -110,13 +118,13 @@ private struct ActiveCallCard: View {
 
     var body: some View {
         K7Card {
-            VStack(spacing: 18) {
+            VStack(spacing: 22) {
                 Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 58))
+                    .font(.system(size: 76))
                     .foregroundStyle(.indigo)
-                VStack(spacing: 4) {
-                    Text(call.displayName ?? call.handle).font(.title2.bold())
-                    Text(call.state.turkishTitle).font(.subheadline).foregroundStyle(.secondary)
+                VStack(spacing: 6) {
+                    Text(call.displayName ?? call.handle).font(.title.bold())
+                    Text(call.state.turkishTitle).font(.body).foregroundStyle(.secondary)
                 }
                 if call.state == .active {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
@@ -124,27 +132,28 @@ private struct ActiveCallCard: View {
                             Button(digit) {
                                 model.connection.send(type: "dtmf", payload: DTMFCommand(callId: call.id, digit: digit))
                             }
-                            .font(.title3.monospacedDigit())
+                            .font(.title2.monospacedDigit().weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 52)
                             .buttonStyle(.bordered)
                             .buttonBorderShape(.circle)
                         }
                     }
                 }
-                HStack(spacing: 12) {
+                HStack(spacing: 14) {
                     if call.state == .incoming {
                         Button(role: .destructive) {
                             model.end(call.id)
-                        } label: { Label("Reddet", systemImage: "phone.down.fill") }
+                        } label: { Label("Reddet", systemImage: "phone.down.fill").frame(maxWidth: .infinity, minHeight: 48) }
                         .buttonStyle(.bordered)
                         Button {
                             model.answer(call.id)
-                        } label: { Label("Cevapla", systemImage: "phone.fill") }
+                        } label: { Label("Cevapla", systemImage: "phone.fill").frame(maxWidth: .infinity, minHeight: 48) }
                         .buttonStyle(.borderedProminent).tint(.green)
                     } else {
                         Button(role: .destructive) {
                             model.end(call.id)
                         } label: {
-                            Label("Bitir", systemImage: "phone.down.fill")
+                            Label("Bitir", systemImage: "phone.down.fill").frame(maxWidth: .infinity, minHeight: 48)
                         }
                         .buttonStyle(.borderedProminent)
                     }
@@ -165,7 +174,7 @@ private struct MessagesView: View {
             ZStack {
                 K7Background()
                 ScrollView {
-                    LazyVStack(spacing: 14) {
+                    LazyVStack(spacing: 18) {
                         ConnectionHero(phase: model.connection.phase,
                                        detail: model.connection.lastError,
                                        retry: model.connection.reconnect)
@@ -174,15 +183,22 @@ private struct MessagesView: View {
                                 K7SectionTitle(title: "Yeni SMS", subtitle: "Mesaj eski iPhone'un SIM hattından gönderilir")
                                 TextField("Telefon numarası", text: $number)
                                     .keyboardType(.phonePad)
+                                    .font(.body)
+                                    .padding(.vertical, 6)
                                     .textFieldStyle(.roundedBorder)
                                 TextField("Mesajınızı yazın", text: $text, axis: .vertical)
                                     .lineLimit(3...6)
+                                    .font(.body)
+                                    .padding(.vertical, 6)
                                     .textFieldStyle(.roundedBorder)
                                 Button {
-                                    if model.sendSMS(handle: number, text: text) { text = "" }
+                                    if model.sendSMS(handle: number, text: text) {
+                                        text = ""
+                                        UIApplication.shared.k7DismissKeyboard()
+                                    }
                                 } label: {
                                     Label("SIM üzerinden gönder", systemImage: "paperplane.fill")
-                                        .frame(maxWidth: .infinity)
+                                        .frame(maxWidth: .infinity, minHeight: 48)
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .disabled(number.isEmpty || text.isEmpty || !model.connection.connected)
@@ -198,8 +214,11 @@ private struct MessagesView: View {
                             ForEach(model.messages) { message in MessageRow(message: message) }
                         }
                     }
-                    .padding(16)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 10)
+                    .padding(.bottom, 34)
                 }
+                .k7KeyboardDismissal()
                 .refreshable { model.refreshSMS() }
             }
             .navigationTitle("Mesajlar")
@@ -214,13 +233,13 @@ private struct MessageRow: View {
         K7Card {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text(message.handle).font(.headline)
+                    Text(message.handle).font(.title3.bold())
                     Spacer()
                     Text(message.state.turkishTitle)
                         .font(.caption.weight(.medium))
                         .foregroundStyle(message.state == .failed ? .red : .secondary)
                 }
-                Text(message.text).font(.body)
+                Text(message.text).font(.body).lineSpacing(3)
                 Text(message.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption2).foregroundStyle(.tertiary)
             }
@@ -236,11 +255,11 @@ private struct StatusView: View {
             ZStack {
                 K7Background()
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(spacing: 20) {
                         ConnectionHero(phase: model.connection.phase,
                                        detail: model.connection.lastError,
                                        retry: model.connection.reconnect)
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
                             MetricTile(title: "Operatör", value: model.device.carrier ?? "Bilinmiyor", symbol: "building.2.crop.circle")
                             MetricTile(title: "Şebeke", value: model.device.radioTechnology ?? "Bilinmiyor", symbol: "antenna.radiowaves.left.and.right", tint: .blue)
                             MetricTile(title: "SIM", value: booleanText(model.device.simReady, yes: "Hazır", no: "Hazır değil"), symbol: "simcard", tint: .purple)
@@ -262,11 +281,14 @@ private struct StatusView: View {
                             }
                         }
                         Text("iOS bir alanı güvenilir biçimde sunmuyorsa K7Bridge yanlış bir 0 değeri göstermek yerine “Bilinmiyor” yazar.")
-                            .font(.footnote).foregroundStyle(.secondary)
+                            .font(.subheadline).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(16)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 10)
+                    .padding(.bottom, 34)
                 }
+                .k7KeyboardDismissal()
                 .refreshable { model.refreshAll() }
             }
             .navigationTitle("Gateway")
@@ -312,7 +334,7 @@ private struct PairingView: View {
             ZStack {
                 K7Background()
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(spacing: 20) {
                         ConnectionHero(phase: model.connection.phase,
                                        detail: model.connection.lastError,
                                        retry: model.connection.reconnect)
@@ -322,6 +344,8 @@ private struct PairingView: View {
                                                subtitle: "QR kodunu tarayın veya eşleştirme metnini yapıştırın")
                                 TextField("k7bridge://pair?d=…", text: $value, axis: .vertical)
                                     .lineLimit(2...5)
+                                    .font(.body.monospaced())
+                                    .padding(.vertical, 6)
                                     .textInputAutocapitalization(.never)
                                     .autocorrectionDisabled()
                                     .textFieldStyle(.roundedBorder)
@@ -329,21 +353,22 @@ private struct PairingView: View {
                                     Button {
                                         showingScanner = true
                                     } label: {
-                                        Label("QR tara", systemImage: "qrcode.viewfinder")
+                                        Label("QR tara", systemImage: "qrcode.viewfinder").frame(minHeight: 46)
                                     }
                                     .buttonStyle(.bordered)
                                     Button {
                                         model.pair(text: value)
+                                        UIApplication.shared.k7DismissKeyboard()
                                     } label: {
                                         Label("Eşleştir", systemImage: "link")
-                                            .frame(maxWidth: .infinity)
+                                            .frame(maxWidth: .infinity, minHeight: 46)
                                     }
                                     .buttonStyle(.borderedProminent)
                                     .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                                 }
                                 if let notice = model.pairingNotice {
                                     Label(notice, systemImage: model.connection.connected ? "checkmark.shield.fill" : "hourglass")
-                                        .font(.footnote)
+                                    .font(.subheadline)
                                         .foregroundStyle(model.connection.connected ? .green : .secondary)
                                 }
                             }
@@ -378,12 +403,15 @@ private struct PairingView: View {
                                 Label("Yerel test sürümü", systemImage: "hammer.fill").font(.headline)
                                 Text("Ücretsiz Apple hesabıyla kurulan uygulama 7 günde bir yeniden imzalanır. APNs ve kilit ekranında uzaktan uyandırma bu sürümde kapalıdır.")
                                     .font(.footnote).foregroundStyle(.secondary)
-                                Text("K7Bridge 0.2.0").font(.caption2).foregroundStyle(.tertiary)
+                                Text(versionText).font(.footnote).foregroundStyle(.tertiary)
                             }
                         }
                     }
-                    .padding(16)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 10)
+                    .padding(.bottom, 34)
                 }
+                .k7KeyboardDismissal()
             }
             .navigationTitle("Ayarlar")
             .sheet(isPresented: $showingScanner) {
@@ -408,6 +436,12 @@ private struct PairingView: View {
             }
         }
     }
+
+    private var versionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-"
+        return "K7Bridge \(version) (\(build))"
+    }
 }
 
 private extension CallState {
@@ -431,5 +465,24 @@ private extension SMSState {
         case .sent: return "Gönderildi"
         case .failed: return "Başarısız"
         }
+    }
+}
+
+private extension View {
+    func k7KeyboardDismissal() -> some View {
+        scrollDismissesKeyboard(.interactively)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Bitti") { UIApplication.shared.k7DismissKeyboard() }
+                        .fontWeight(.semibold)
+                }
+            }
+    }
+}
+
+private extension UIApplication {
+    func k7DismissKeyboard() {
+        sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }

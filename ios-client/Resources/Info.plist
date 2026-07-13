@@ -17,6 +17,7 @@
   <key>NSBonjourServices</key><array><string>_k7bridge._tcp</string></array>
   <key>UIBackgroundModes</key><array><string>voip</string><string>audio</string><string>remote-notification</string></array>
   <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string></array>
+  <key>UIRequiresFullScreen</key><true/>
   <key>UIApplicationSupportsIndirectInputEvents</key><true/>
 </dict>
 </plist>

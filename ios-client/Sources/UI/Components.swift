@@ -17,10 +17,10 @@ struct K7Card<Content: View>: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(18)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(22)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
                     .stroke(Color.primary.opacity(0.06), lineWidth: 1)
             }
     }
@@ -51,19 +51,19 @@ struct ConnectionHero: View {
 
     var body: some View {
         K7Card {
-            HStack(spacing: 14) {
+            HStack(spacing: 16) {
                 Image(systemName: symbol)
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(.system(size: 28, weight: .semibold))
                     .foregroundStyle(color)
-                    .frame(width: 46, height: 46)
+                    .frame(width: 56, height: 56)
                     .background(color.opacity(0.13), in: Circle())
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(phase.title).font(.headline)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(phase.title).font(.title3.bold())
                     if let detail, !detail.isEmpty {
-                        Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        Text(detail).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
                     } else {
                         Text(phase.isOnline ? "Kontrol kanalı kullanıma hazır" : "Eski iPhone'un hotspot ağına bağlanın")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 8)
@@ -86,19 +86,19 @@ struct MetricTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Image(systemName: symbol)
-                .font(.title3.weight(.semibold))
+                .font(.title2.weight(.semibold))
                 .foregroundStyle(tint)
             Text(value)
-                .font(.headline)
+                .font(.title3.bold())
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
             Text(title)
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 105, alignment: .leading)
-        .padding(16)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
+        .padding(20)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }
 
@@ -108,8 +108,8 @@ struct K7SectionTitle: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.title3.bold())
-            if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+            Text(title).font(.title2.bold())
+            if let subtitle { Text(subtitle).font(.subheadline).foregroundStyle(.secondary) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
