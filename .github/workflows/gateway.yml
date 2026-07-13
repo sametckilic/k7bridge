@@ -1,0 +1,45 @@
+name: Gateway package
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "gateway/**"
+      - ".github/workflows/gateway.yml"
+
+jobs:
+  package:
+    runs-on: macos-15
+    env:
+      THEOS: ${{ github.workspace }}/.theos-toolchain
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install dpkg ldid make
+
+      - name: Install Theos
+        run: git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+
+      - name: Install rootless libsodium headers and library
+        run: |
+          curl -fL "https://apt.procurs.us/pool/main/iphoneos-arm64-rootless/1800/libsodium/libsodium-dev_1.0.18_iphoneos-arm64.deb" -o /tmp/libsodium-dev.deb
+          curl -fL "https://apt.procurs.us/pool/main/iphoneos-arm64-rootless/1800/libsodium/libsodium23_1.0.18_iphoneos-arm64.deb" -o /tmp/libsodium23.deb
+          mkdir -p /tmp/sodium-dev /tmp/sodium-runtime "$THEOS/include" "$THEOS/lib/iphone/rootless"
+          dpkg-deb -x /tmp/libsodium-dev.deb /tmp/sodium-dev
+          dpkg-deb -x /tmp/libsodium23.deb /tmp/sodium-runtime
+          cp -R /tmp/sodium-dev/var/jb/usr/include/. "$THEOS/include/"
+          cp -R /tmp/sodium-dev/var/jb/usr/lib/. "$THEOS/lib/iphone/rootless/"
+          cp -R /tmp/sodium-runtime/var/jb/usr/lib/. "$THEOS/lib/iphone/rootless/"
+
+      - name: Build rootless package
+        working-directory: gateway
+        run: gmake clean package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless messages=yes
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: K7BridgeGateway-rootless
+          path: gateway/packages/*.deb
+          if-no-files-found: error
+

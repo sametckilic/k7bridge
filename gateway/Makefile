@@ -1,5 +1,5 @@
 ARCHS = arm64
-TARGET = iphone:clang:15.6:15.0
+TARGET = iphone:clang:latest:15.0
 THEOS_PACKAGE_SCHEME = rootless
 INSTALL_TARGET_PROCESSES = callservicesd mediaserverd
 
