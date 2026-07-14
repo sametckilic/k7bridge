@@ -69,8 +69,7 @@ static void K7EmitProbeSnapshot(void) {
 }
 
 %group K7AudioDiscovery
-%hookf(OSStatus,AudioUnitRender,AudioUnit unit,AudioUnitRenderActionFlags *flags,
-    const AudioTimeStamp *timestamp,UInt32 bus,UInt32 frames,AudioBufferList *data) {
+%hookf(OSStatus,AudioUnitRender,AudioUnit unit,AudioUnitRenderActionFlags *flags,const AudioTimeStamp *timestamp,UInt32 bus,UInt32 frames,AudioBufferList *data) {
     OSStatus status=%orig;
     if (status==noErr) K7RecordRender(unit,bus,frames,data);
     return status;
