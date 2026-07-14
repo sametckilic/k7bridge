@@ -3,7 +3,7 @@
 1. Keep the gateway disconnected from production use and make a test call with a
    consenting second party.
 2. Install Frida on the palera1n phone. Attach `audio-discovery.js` separately to
-   `mediaserverd`, `MobilePhone` (the verified target on this iPhone 7/iOS 15.7.5), and `CommCenter`;
+   `mediaserverd`, `SpringBoard` (the verified full-lifecycle call target on this iPhone 7/iOS 15.7.5), and `CommCenter`;
    store each JSON message and the
    exact iOS build number.
 3. Use the trace to create a build-specific hook in a separate branch. The discovery

@@ -1,1 +1,1 @@
-{ Filter = { Executables = ( "MobilePhone" ); }; }
+{ Filter = { Executables = ( "SpringBoard" ); }; }

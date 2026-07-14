@@ -31,6 +31,17 @@ static id K7Value(id value,NSString *key) {
     @catch(NSException *exception) { return nil; }
 }
 
+static NSUUID *K7CallIdentifier(id call) {
+    id value=K7Value(call,@"callUUID");
+    if ([value isKindOfClass:NSUUID.class]) return value;
+    for (NSString *candidate in @[[value description]?:@"",
+            [K7Value(call,@"uniqueProxyIdentifier") description]?:@""]) {
+        NSUUID *identifier=[[NSUUID alloc] initWithUUIDString:candidate];
+        if (identifier) return identifier;
+    }
+    return [NSUUID UUID];
+}
+
 static BOOL K7Emit(NSDictionary *event) {
     NSDictionary *reply=[K7BridgeIPC send:event toPort:@"com.k7bridge.gateway" timeout:1];
     BOOL accepted=[reply[@"ok"] boolValue];
@@ -137,9 +148,7 @@ static K7CallObserver *K7Observer;
     BOOL incoming=[K7Value(call,@"incoming") boolValue]||[K7Value(call,@"isIncoming") boolValue];
     if (incoming) {
         if (!self.lastCallID) {
-            NSString *identifier=[K7Value(call,@"uniqueProxyIdentifier") description];
-            NSUUID *callID=[[NSUUID alloc] initWithUUIDString:identifier];
-            self.lastCallID=callID?:[NSUUID UUID];
+            self.lastCallID=K7CallIdentifier(call);
             NSLog(@"K7TelephonyBridge discovered incoming call %@",self.lastCallID.UUIDString);
             K7Diagnostic(@"incoming_discovered",@"info",@{@"callId":self.lastCallID.UUIDString});
         }
@@ -221,10 +230,10 @@ static NSDictionary *K7Handle(NSDictionary *command) {
         if ([type isEqual:@"dtmf"]) return K7InvokeDTMF(call,payload[@"digit"]);
         if (![@[@"answer",@"reject",@"end"] containsObject:type])
             return @{@"ok":@NO,@"error":@"unsupported telephony command"};
-        SEL selector=NSSelectorFromString([type isEqual:@"answer"]?@"answer":@"disconnect");
-        if (!call || ![call respondsToSelector:selector])
+        SEL selector=NSSelectorFromString([type isEqual:@"answer"]?@"answerCall:":@"disconnectCall:");
+        if (!center || !call || ![center respondsToSelector:selector])
             return @{@"ok":@NO,@"error":@"call selector unavailable"};
-        ((void(*)(id,SEL))objc_msgSend)(call,selector);
+        ((void(*)(id,SEL,id))objc_msgSend)(center,selector,call);
         return @{@"ok":@YES};
     } @catch(NSException *exception) {
         if ([type isEqual:@"dial"]) {
@@ -260,8 +269,8 @@ static void K7StartBridge(void) {
 }
 
 %ctor { @autoreleasepool {
-    // Do not touch TelephonyUtilities while dyld is still constructing MobilePhone.
-    // Initializing synchronously here can deadlock the app before its run loop starts.
+    // Do not touch TelephonyUtilities while dyld is still constructing SpringBoard.
+    // Initializing synchronously here can deadlock the process before its run loop starts.
     dispatch_async(dispatch_get_main_queue(), ^{
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
             dispatch_get_main_queue(), ^{ K7StartBridge(); });

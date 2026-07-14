@@ -1,7 +1,7 @@
 ARCHS = arm64
 TARGET = iphone:clang:latest:15.0
 THEOS_PACKAGE_SCHEME = rootless
-INSTALL_TARGET_PROCESSES = MobilePhone mediaserverd
+INSTALL_TARGET_PROCESSES = SpringBoard mediaserverd
 
 include $(THEOS)/makefiles/common.mk
 
