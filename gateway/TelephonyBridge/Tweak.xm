@@ -232,10 +232,28 @@ static NSDictionary *K7Handle(NSDictionary *command) {
         if ([type isEqual:@"dtmf"]) return K7InvokeDTMF(call,payload[@"digit"]);
         if (![@[@"answer",@"reject",@"end"] containsObject:type])
             return @{@"ok":@NO,@"error":@"unsupported telephony command"};
-        SEL selector=NSSelectorFromString([type isEqual:@"answer"]?@"answerCall:":@"disconnectCall:");
+
+        if ([type isEqual:@"answer"]) {
+            Class requestClass=NSClassFromString(@"TUAnswerRequest");
+            SEL initialize=NSSelectorFromString(@"initWithCall:");
+            SEL answer=NSSelectorFromString(@"answerWithRequest:");
+            if (!center || !call || !requestClass || ![center respondsToSelector:answer] ||
+                ![requestClass instancesRespondToSelector:initialize])
+                return @{@"ok":@NO,@"error":@"answer request API unavailable"};
+            id request=((id(*)(id,SEL,id))objc_msgSend)([requestClass alloc],initialize,call);
+            if (!request) return @{@"ok":@NO,@"error":@"answer request creation failed"};
+            ((void(*)(id,SEL,id))objc_msgSend)(center,answer,request);
+            K7Diagnostic(@"command_invoked",@"info",@{@"type":type,
+                @"selector":@"answerWithRequest:"});
+            return @{@"ok":@YES};
+        }
+
+        SEL selector=NSSelectorFromString(@"disconnectCall:");
         if (!center || !call || ![center respondsToSelector:selector])
             return @{@"ok":@NO,@"error":@"call selector unavailable"};
         ((void(*)(id,SEL,id))objc_msgSend)(center,selector,call);
+        K7Diagnostic(@"command_invoked",@"info",@{@"type":type,
+            @"selector":@"disconnectCall:"});
         return @{@"ok":@YES};
     } @catch(NSException *exception) {
         if ([type isEqual:@"dial"]) {
