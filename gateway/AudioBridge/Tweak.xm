@@ -6,6 +6,7 @@
 
 static NSString *const K7AudioGatePath=@"/var/mobile/Library/K7Bridge/audio-gate.json";
 static NSString *const K7AudioProbeFlagPath=@"/var/mobile/Library/K7Bridge/audio-probe.enabled";
+static NSString *const K7AudioCallbackProbeFlagPath=@"/var/mobile/Library/K7Bridge/audio-callback-probe.enabled";
 static const unsigned int K7AudioProbeSlotCount=32;
 
 typedef struct {
@@ -22,6 +23,7 @@ typedef struct {
 
 static K7AudioProbeSlot K7AudioProbeSlots[K7AudioProbeSlotCount];
 static BOOL K7AudioProbeEnabled=NO;
+static BOOL K7AudioCallbackProbeEnabled=NO;
 static dispatch_source_t K7AudioProbeTimer;
 static dispatch_queue_t K7AudioProbeQueue;
 
@@ -129,7 +131,7 @@ static OSStatus K7AudioProbeCallback(void *reference,AudioUnitRenderActionFlags 
 }
 
 %hookf(OSStatus,AudioUnitSetProperty,AudioUnit unit,AudioUnitPropertyID property,AudioUnitScope scope,AudioUnitElement element,const void *data,UInt32 size) {
-    if (property==kAudioUnitProperty_SetRenderCallback && data && size>=sizeof(AURenderCallbackStruct)) {
+    if (K7AudioCallbackProbeEnabled && property==kAudioUnitProperty_SetRenderCallback && data && size>=sizeof(AURenderCallbackStruct)) {
         const AURenderCallbackStruct *original=(const AURenderCallbackStruct *)data;
         if (original->inputProc && original->inputProc!=K7AudioProbeCallback) {
             K7AudioCallbackContext *context=(K7AudioCallbackContext *)calloc(1,sizeof(K7AudioCallbackContext));
@@ -169,6 +171,7 @@ static OSStatus K7AudioProbeCallback(void *reference,AudioUnitRenderActionFlags 
 
 %ctor { @autoreleasepool {
     K7AudioProbeEnabled=[[NSFileManager defaultManager] fileExistsAtPath:K7AudioProbeFlagPath];
+    K7AudioCallbackProbeEnabled=[[NSFileManager defaultManager] fileExistsAtPath:K7AudioCallbackProbeFlagPath];
     NSData *data=[NSData dataWithContentsOfFile:K7AudioGatePath];
     NSDictionary *gate=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
 

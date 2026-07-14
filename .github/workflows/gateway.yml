@@ -2,10 +2,6 @@ name: Gateway package
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "gateway/**"
-      - ".github/workflows/gateway.yml"
 
 jobs:
   package:
