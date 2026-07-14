@@ -11,6 +11,7 @@ static const unsigned int K7AudioProbeSlotCount=32;
 typedef struct {
     std::atomic<uintptr_t> unit;
     std::atomic<uint32_t> bus;
+    std::atomic<uint32_t> path;
     std::atomic<uint64_t> calls;
     std::atomic<uint32_t> frames;
     std::atomic<uint32_t> buffers;
@@ -29,12 +30,13 @@ static void K7AtomicMaximum(std::atomic<uint32_t> &target,uint32_t value) {
     while (current<value && !target.compare_exchange_weak(current,value,std::memory_order_relaxed)) {}
 }
 
-static void K7RecordRender(AudioUnit unit,UInt32 bus,UInt32 frames,AudioBufferList *data) {
+static void K7RecordRender(AudioUnit unit,UInt32 bus,UInt32 path,UInt32 frames,AudioBufferList *data) {
     uintptr_t raw=(uintptr_t)unit;
     unsigned int empty=K7AudioProbeSlotCount;
     for (unsigned int index=0;index<K7AudioProbeSlotCount;index++) {
         uintptr_t current=K7AudioProbeSlots[index].unit.load(std::memory_order_relaxed);
-        if (current==raw && K7AudioProbeSlots[index].bus.load(std::memory_order_relaxed)==bus) {
+        if (current==raw && K7AudioProbeSlots[index].bus.load(std::memory_order_relaxed)==bus &&
+            K7AudioProbeSlots[index].path.load(std::memory_order_relaxed)==path) {
             K7AudioProbeSlots[index].calls.fetch_add(1,std::memory_order_relaxed);
             K7AudioProbeSlots[index].frames.store(frames,std::memory_order_relaxed);
             if (data) {
@@ -73,6 +75,7 @@ static void K7RecordRender(AudioUnit unit,UInt32 bus,UInt32 frames,AudioBufferLi
         uintptr_t expected=0;
         if (K7AudioProbeSlots[empty].unit.compare_exchange_strong(expected,raw,std::memory_order_relaxed)) {
             K7AudioProbeSlots[empty].bus.store(bus,std::memory_order_relaxed);
+            K7AudioProbeSlots[empty].path.store(path,std::memory_order_relaxed);
             K7AudioProbeSlots[empty].calls.store(1,std::memory_order_relaxed);
             K7AudioProbeSlots[empty].frames.store(frames,std::memory_order_relaxed);
         }
@@ -90,6 +93,7 @@ static void K7EmitProbeSnapshot(void) {
             @"slot":@(index).stringValue,
             @"unit":[NSString stringWithFormat:@"0x%llx",(unsigned long long)unit],
             @"bus":@(K7AudioProbeSlots[index].bus.load(std::memory_order_relaxed)).stringValue,
+            @"path":K7AudioProbeSlots[index].path.load(std::memory_order_relaxed)==2?@"callback":@"render",
             @"calls":@(calls).stringValue,
             @"frames":@(K7AudioProbeSlots[index].frames.load(std::memory_order_relaxed)).stringValue,
             @"buffers":@(K7AudioProbeSlots[index].buffers.load(std::memory_order_relaxed)).stringValue,
@@ -104,13 +108,42 @@ static void K7EmitProbeSnapshot(void) {
 }
 
 %group K7AudioDiscovery
+typedef struct {
+    AURenderCallback callback;
+    void *reference;
+    AudioUnit unit;
+} K7AudioCallbackContext;
+
+static OSStatus K7AudioProbeCallback(void *reference,AudioUnitRenderActionFlags *flags,
+    const AudioTimeStamp *timestamp,UInt32 bus,UInt32 frames,AudioBufferList *data) {
+    K7AudioCallbackContext *context=(K7AudioCallbackContext *)reference;
+    OSStatus status=context->callback(context->reference,flags,timestamp,bus,frames,data);
+    if (status==noErr) K7RecordRender(context->unit,bus,2,frames,data);
+    return status;
+}
+
 %hookf(OSStatus,AudioUnitRender,AudioUnit unit,AudioUnitRenderActionFlags *flags,const AudioTimeStamp *timestamp,UInt32 bus,UInt32 frames,AudioBufferList *data) {
     OSStatus status=%orig;
-    if (status==noErr) K7RecordRender(unit,bus,frames,data);
+    if (status==noErr) K7RecordRender(unit,bus,1,frames,data);
     return status;
 }
 
 %hookf(OSStatus,AudioUnitSetProperty,AudioUnit unit,AudioUnitPropertyID property,AudioUnitScope scope,AudioUnitElement element,const void *data,UInt32 size) {
+    if (property==kAudioUnitProperty_SetRenderCallback && data && size>=sizeof(AURenderCallbackStruct)) {
+        const AURenderCallbackStruct *original=(const AURenderCallbackStruct *)data;
+        if (original->inputProc && original->inputProc!=K7AudioProbeCallback) {
+            K7AudioCallbackContext *context=(K7AudioCallbackContext *)calloc(1,sizeof(K7AudioCallbackContext));
+            if (context) {
+                context->callback=original->inputProc;
+                context->reference=original->inputProcRefCon;
+                context->unit=unit;
+                AURenderCallbackStruct replacement={K7AudioProbeCallback,context};
+                OSStatus replacementStatus=%orig(unit,property,scope,element,&replacement,sizeof(replacement));
+                if (replacementStatus!=noErr) free(context);
+                return replacementStatus;
+            }
+        }
+    }
     OSStatus status=%orig;
     if (status==noErr && property==kAudioUnitProperty_StreamFormat && data && size>=sizeof(AudioStreamBasicDescription)) {
         AudioStreamBasicDescription format=*(const AudioStreamBasicDescription *)data;
