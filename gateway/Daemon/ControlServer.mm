@@ -31,6 +31,9 @@
         sec_protocol_options_t tls=nw_tls_copy_sec_protocol_options(options); sec_identity_t value=sec_identity_create(identity);
         sec_protocol_options_set_local_identity(tls,value);
     },NW_PARAMETERS_DEFAULT_CONFIGURATION);
+    // Package upgrades restart the daemon while accepted sockets can still be in
+    // TIME_WAIT. Allow the single-instance daemon to reclaim its fixed port.
+    nw_parameters_set_reuse_local_address(parameters,true);
     CFRelease(identity);
     nw_protocol_stack_t stack=nw_parameters_copy_default_protocol_stack(parameters);
     nw_protocol_options_t websocket=nw_ws_create_options(nw_ws_version_13);
@@ -49,6 +52,9 @@
             NSInteger code=issue?nw_error_get_error_code(issue):0;
             NSLog(@"K7Bridge listener failed: %s",issue&&nw_error_get_error_domain(issue)==nw_error_domain_posix?strerror((int)code):"network error");
             [weakSelf log:@"listener_failed" level:@"error" fields:@{@"code":@(code)}];
+            // A daemon without its control listener cannot do useful work. Let
+            // launchd retry instead of remaining alive in a false-ready state.
+            exit(70);
         }
     });
     nw_listener_start(_listener); return YES;

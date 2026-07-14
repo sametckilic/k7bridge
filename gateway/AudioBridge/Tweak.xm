@@ -6,6 +6,7 @@
 
 static NSString *const K7AudioGatePath=@"/var/mobile/Library/K7Bridge/audio-gate.json";
 static NSString *const K7AudioProbeFlagPath=@"/var/mobile/Library/K7Bridge/audio-probe.enabled";
+static NSString *const K7AudioProbeSessionFlagPath=@"/var/mobile/Library/K7Bridge/audio-probe-session.enabled";
 static NSString *const K7AudioCallbackProbeFlagPath=@"/var/mobile/Library/K7Bridge/audio-callback-probe.enabled";
 static const unsigned int K7AudioProbeSlotCount=32;
 
@@ -170,7 +171,8 @@ static OSStatus K7AudioProbeCallback(void *reference,AudioUnitRenderActionFlags 
 %end
 
 %ctor { @autoreleasepool {
-    K7AudioProbeEnabled=[[NSFileManager defaultManager] fileExistsAtPath:K7AudioProbeFlagPath];
+    K7AudioProbeEnabled=[[NSFileManager defaultManager] fileExistsAtPath:K7AudioProbeFlagPath] &&
+        [[NSFileManager defaultManager] fileExistsAtPath:K7AudioProbeSessionFlagPath];
     K7AudioCallbackProbeEnabled=[[NSFileManager defaultManager] fileExistsAtPath:K7AudioCallbackProbeFlagPath];
     NSData *data=[NSData dataWithContentsOfFile:K7AudioGatePath];
     NSDictionary *gate=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
