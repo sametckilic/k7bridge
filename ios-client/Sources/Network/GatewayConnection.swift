@@ -26,6 +26,15 @@ final class GatewayConnection: NSObject, ObservableObject {
     private var manualDisconnect = false
 
     func connect(_ pairing: PairingMaterial) {
+        if let current = self.pairing,
+           current.document.gatewayId == pairing.document.gatewayId,
+           current.document.host == pairing.document.host,
+           current.document.port == pairing.document.port,
+           current.clientPublicKey == pairing.clientPublicKey,
+           (phase == .connecting || phase == .authenticating || phase == .online) {
+            diagnostic("connect_ignored", fields: ["reason": "attempt_already_active"])
+            return
+        }
         manualDisconnect = true
         closeTransport()
         manualDisconnect = false
@@ -269,6 +278,10 @@ extension GatewayConnection: URLSessionWebSocketDelegate {
         let digest = SHA256.hash(data: SecCertificateCopyData(certificate) as Data)
             .map { String(format: "%02x", $0) }.joined()
         Task { @MainActor in
+            guard self.session === session else {
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
             if digest == self.pin {
                 self.diagnostic("certificate_pin_verified")
                 completionHandler(.useCredential, URLCredential(trust: trust))

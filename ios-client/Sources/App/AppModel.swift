@@ -192,7 +192,8 @@ final class AppModel: ObservableObject {
         diagnostics.record(component: "lifecycle", event: "application_active")
         contacts.reloadIfAuthorized()
         if connection.connected { refreshAll() }
-        else if pairing != nil, connection.phase != .connecting, connection.phase != .authenticating {
+        else if pairing != nil, connection.phase != .connecting,
+                connection.phase != .authenticating, connection.phase != .reconnecting {
             connection.reconnect()
         }
     }
