@@ -7,6 +7,7 @@ if [ "$1" = "configure" ]; then
     # Fully unload the previous listener before starting the replacement. A direct
     # kickstart can race the old process and leave the new daemon without port 7443.
     launchctl bootout system/com.k7bridge.gateway 2>/dev/null || true
+    killall -9 k7bridged 2>/dev/null || true
     sleep 1
     launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.k7bridge.gateway.plist 2>/dev/null || true
     launchctl kickstart system/com.k7bridge.gateway 2>/dev/null || true
