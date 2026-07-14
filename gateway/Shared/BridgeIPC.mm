@@ -95,7 +95,15 @@ static BOOL K7WriteMessage(int fd,NSDictionary *message) {
                 if (errno==EINTR) continue;
                 break;
             }
+            // Darwin may propagate O_NONBLOCK from the listening socket. The peer
+            // writes immediately after connect, but a non-blocking first recv can
+            // still win that race and misclassify a valid frame as empty.
+            int clientFlags=fcntl(client,F_GETFL,0);
+            if (clientFlags>=0) fcntl(client,F_SETFL,clientFlags&~O_NONBLOCK);
             setsockopt(client,SOL_SOCKET,SO_NOSIGPIPE,&enabled,sizeof(enabled));
+            timeval clientTimeout={2,0};
+            setsockopt(client,SOL_SOCKET,SO_RCVTIMEO,&clientTimeout,sizeof(clientTimeout));
+            setsockopt(client,SOL_SOCKET,SO_SNDTIMEO,&clientTimeout,sizeof(clientTimeout));
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
                 NSDictionary *message=K7ReadMessage(client);
                 __block NSDictionary *reply=@{@"ok":@NO,@"error":@"invalid IPC message"};
