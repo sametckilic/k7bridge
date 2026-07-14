@@ -15,12 +15,41 @@ struct RootView: View {
         .controlSize(.large)
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
+        .fullScreenCover(item: $model.call) { _ in
+            ActiveCallScreen()
+                .environmentObject(model)
+        }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 if model.connection.connected { model.refreshAll() }
             }
         }
+    }
+}
+
+private struct ActiveCallScreen: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        ZStack {
+            K7Background()
+            if let call = model.call {
+                ScrollView {
+                    VStack(spacing: 20) {
+                        Text("K7Bridge")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        ActiveCallCard(call: call)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 28)
+                    .frame(maxWidth: 620)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .interactiveDismissDisabled()
     }
 }
 

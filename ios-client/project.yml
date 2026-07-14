@@ -7,8 +7,8 @@ settings:
   base:
     SWIFT_VERSION: 5.0
     SWIFT_STRICT_CONCURRENCY: minimal
-    CURRENT_PROJECT_VERSION: 9
-    MARKETING_VERSION: 0.3.3
+    CURRENT_PROJECT_VERSION: 10
+    MARKETING_VERSION: 0.3.4
 targets:
   K7Bridge:
     type: application
@@ -44,8 +44,8 @@ targets:
         CODE_SIGN_STYLE: Automatic
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: 9
-        MARKETING_VERSION: 0.3.3
+        CURRENT_PROJECT_VERSION: 10
+        MARKETING_VERSION: 0.3.4
     scheme:
       testTargets: [K7BridgeTests]
   K7BridgeTests:
