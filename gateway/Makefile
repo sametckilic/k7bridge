@@ -17,7 +17,7 @@ TWEAK_NAME = K7TelephonyBridge K7AudioBridge
 K7TelephonyBridge_FILES = TelephonyBridge/Tweak.xm Shared/BridgeIPC.mm
 K7TelephonyBridge_FRAMEWORKS = Foundation CoreFoundation
 K7TelephonyBridge_CFLAGS = -fobjc-arc -IHeaders -Wno-nullability-completeness
-K7AudioBridge_FILES = AudioBridge/Tweak.xm
+K7AudioBridge_FILES = AudioBridge/Tweak.xm Shared/BridgeIPC.mm
 K7AudioBridge_FRAMEWORKS = Foundation AudioToolbox
 K7AudioBridge_CFLAGS = -fobjc-arc -IHeaders -Wno-nullability-completeness
 
