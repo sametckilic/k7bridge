@@ -233,25 +233,35 @@ static NSDictionary *K7Handle(NSDictionary *command) {
             SEL initialize=NSSelectorFromString(@"initWithURL:");
             SEL canDial=NSSelectorFromString(@"canDialWithRequest:");
             SEL dial=NSSelectorFromString(@"dialWithRequest:");
+            SEL dialAsync=NSSelectorFromString(@"dialWithRequest:completion:");
             NSURL *url=[NSURL URLWithString:[@"tel:" stringByAppendingString:handle?:@""]];
-            if (!center || ![center respondsToSelector:dial] || !requestClass ||
+            if (!center || (![center respondsToSelector:dial] && ![center respondsToSelector:dialAsync]) || !requestClass ||
                 ![requestClass instancesRespondToSelector:initialize] || !url || !handle.length || !callID)
                 return @{@"ok":@NO,@"error":@"dial selector or arguments unavailable"};
             id request=((id(*)(id,SEL,id))objc_msgSend)([requestClass alloc],initialize,url);
             if (!request) return @{@"ok":@NO,@"error":@"dial request creation failed"};
+            SEL endpoint=NSSelectorFromString(@"setEndpointOnCurrentDevice:");
+            if ([request respondsToSelector:endpoint])
+                ((void(*)(id,SEL,BOOL))objc_msgSend)(request,endpoint,YES);
+            SEL dialAssist=NSSelectorFromString(@"setPerformDialAssist:");
+            if ([request respondsToSelector:dialAssist])
+                ((void(*)(id,SEL,BOOL))objc_msgSend)(request,dialAssist,YES);
             if ([center respondsToSelector:canDial] &&
                 !((BOOL(*)(id,SEL,id))objc_msgSend)(center,canDial,request))
                 return @{@"ok":@NO,@"error":@"system rejected dial request"};
             [K7Observer beginDial:callID];
-            id started=((id(*)(id,SEL,id))objc_msgSend)(center,dial,request);
-            if (!started) {
-                K7Observer.lastCallID=nil;
-                K7Observer.lastEmittedState=nil;
-                K7Observer.pendingDialDeadline=nil;
-                return @{@"ok":@NO,@"error":@"dial request did not create a call"};
+            NSString *invokedSelector=nil;
+            if ([center respondsToSelector:dialAsync]) {
+                void (^completion)(void)=^{};
+                ((void(*)(id,SEL,id,id))objc_msgSend)(center,dialAsync,request,completion);
+                invokedSelector=@"dialWithRequest:completion:";
+            } else {
+                ((void(*)(id,SEL,id))objc_msgSend)(center,dial,request);
+                invokedSelector=@"dialWithRequest:";
             }
             K7Diagnostic(@"dial_invoked",@"info",@{@"callId":callID.UUIDString,
-                @"resultClass":NSStringFromClass([started class])?:@"unknown"});
+                @"selector":invokedSelector,
+                @"endpointOnCurrentDevice":@YES});
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW,500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{ [K7Observer refresh]; });
             return @{@"ok":@YES};
         }
