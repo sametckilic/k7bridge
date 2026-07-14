@@ -28,16 +28,29 @@ static id K7FirstCall(void) {
     return values.firstObject;
 }
 
-static id K7Value(id value,NSString *key) {
-    @try { return [value valueForKey:key]; }
-    @catch(NSException *exception) { return nil; }
+static id K7ObjectValue(id value,NSString *selectorName) {
+    SEL selector=NSSelectorFromString(selectorName);
+    if (!value || ![value respondsToSelector:selector]) return nil;
+    return ((id(*)(id,SEL))objc_msgSend)(value,selector);
+}
+
+static BOOL K7BoolValue(id value,NSString *selectorName) {
+    SEL selector=NSSelectorFromString(selectorName);
+    return value&&[value respondsToSelector:selector]?
+        ((BOOL(*)(id,SEL))objc_msgSend)(value,selector):NO;
+}
+
+static NSInteger K7IntegerValue(id value,NSString *selectorName) {
+    SEL selector=NSSelectorFromString(selectorName);
+    return value&&[value respondsToSelector:selector]?
+        ((NSInteger(*)(id,SEL))objc_msgSend)(value,selector):0;
 }
 
 static NSUUID *K7CallIdentifier(id call) {
-    id value=K7Value(call,@"callUUID");
+    id value=K7ObjectValue(call,@"callUUID");
     if ([value isKindOfClass:NSUUID.class]) return value;
     for (NSString *candidate in @[[value description]?:@"",
-            [K7Value(call,@"uniqueProxyIdentifier") description]?:@""]) {
+            [K7ObjectValue(call,@"uniqueProxyIdentifier") description]?:@""]) {
         NSUUID *identifier=[[NSUUID alloc] initWithUUIDString:candidate];
         if (identifier) return identifier;
     }
@@ -137,17 +150,15 @@ static K7CallObserver *K7Observer;
         self.observedCall=call;
         K7Diagnostic(@"call_object_observed",@"info",@{
             @"class":NSStringFromClass([call class])?:@"unknown",
-            @"status":[K7Value(call,@"status") description]?:@"nil",
-            @"incoming":[K7Value(call,@"incoming") description]?:@"nil",
-            @"isIncoming":[K7Value(call,@"isIncoming") description]?:@"nil",
-            @"connected":[K7Value(call,@"connected") description]?:@"nil",
-            @"isConnected":[K7Value(call,@"isConnected") description]?:@"nil"
+            @"status":@(K7IntegerValue(call,@"status")),
+            @"isIncoming":@(K7BoolValue(call,@"isIncoming")),
+            @"isConnected":@(K7BoolValue(call,@"isConnected"))
         });
         @try { [call addObserver:self forKeyPath:@"status" options:NSKeyValueObservingOptionNew context:NULL]; }
         @catch(NSException *exception) { NSLog(@"K7TelephonyBridge call status observation unavailable: %@",exception); }
     }
 
-    BOOL incoming=[K7Value(call,@"incoming") boolValue]||[K7Value(call,@"isIncoming") boolValue];
+    BOOL incoming=K7BoolValue(call,@"isIncoming");
     if (incoming) {
         if (!self.lastCallID) {
             self.lastCallID=K7CallIdentifier(call);
@@ -155,7 +166,8 @@ static K7CallObserver *K7Observer;
             K7Diagnostic(@"incoming_discovered",@"info",@{@"callId":self.lastCallID.UUIDString});
         }
         if (![self.lastEmittedState isEqual:@"incoming"]) {
-            NSString *handle=[K7Value(call,@"destinationID") description]?:[K7Value(call,@"displayName") description]?:@"";
+            NSString *handle=[K7ObjectValue(call,@"destinationID") description]?:
+                [K7ObjectValue(call,@"displayName") description]?:@"";
             if ([handle isEqual:@"(null)"]) handle=@"";
             if (K7Emit(@{ @"type":@"incomingCall", @"callId":self.lastCallID.UUIDString,
                 @"handle":handle, @"displayName":@"" })) {
@@ -166,8 +178,8 @@ static K7CallObserver *K7Observer;
         }
     }
 
-    BOOL connected=[K7Value(call,@"connected") boolValue]||[K7Value(call,@"isConnected") boolValue];
-    BOOL disconnected=[K7Value(call,@"disconnected") boolValue]||[K7Value(call,@"isDisconnected") boolValue];
+    BOOL connected=K7BoolValue(call,@"isConnected");
+    BOOL disconnected=K7ObjectValue(call,@"dateEnded")!=nil;
     if (disconnected) {
         [self emitState:@"ended"];
         return;
