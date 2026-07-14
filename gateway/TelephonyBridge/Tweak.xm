@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import <dlfcn.h>
 #import <objc/message.h>
 #import <string.h>
 #import "../Shared/BridgeIPC.h"
@@ -6,6 +7,7 @@
 static BOOL K7CommandPortReady=NO;
 static NSDictionary *K7LastHealth;
 static K7BridgeIPC *K7IPC;
+static void *K7TelephonyUtilitiesHandle;
 
 static void K7Diagnostic(NSString *event,NSString *level,NSDictionary *fields) {
     [K7BridgeIPC send:@{ @"type":@"diagnostic", @"component":@"telephony",
@@ -247,6 +249,13 @@ static NSDictionary *K7Handle(NSDictionary *command) {
 
 static void K7StartBridge(void) {
     if (K7Observer) return;
+    if (!NSClassFromString(@"TUCallCenter")) {
+        K7TelephonyUtilitiesHandle=dlopen(
+            "/System/Library/PrivateFrameworks/TelephonyUtilities.framework/TelephonyUtilities",
+            RTLD_LAZY|RTLD_LOCAL);
+        if (!K7TelephonyUtilitiesHandle)
+            NSLog(@"K7TelephonyBridge could not load TelephonyUtilities: %s",dlerror());
+    }
     K7IPC=[[K7BridgeIPC alloc] initLocalPort:@"com.k7bridge.telephony"
         handler:^NSDictionary *(NSDictionary *message) { return K7Handle(message); }];
     K7CommandPortReady=K7IPC!=nil;
@@ -272,7 +281,7 @@ static void K7StartBridge(void) {
     // Do not touch TelephonyUtilities while dyld is still constructing SpringBoard.
     // Initializing synchronously here can deadlock the process before its run loop starts.
     dispatch_async(dispatch_get_main_queue(), ^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3*NSEC_PER_SEC),
             dispatch_get_main_queue(), ^{ K7StartBridge(); });
     });
 } }
