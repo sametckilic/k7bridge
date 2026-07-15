@@ -1,9 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$DeviceHost = 'k7bridge-phone',
-    [string]$DeviceUser = 'mobile',
-    [switch]$RestartAudioProbe,
-    [switch]$AudioDiscoverySession
+    [string]$DeviceUser = 'mobile'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,12 +19,8 @@ Write-Host "Paket telefona aktariliyor: $($package.Name)"
 & scp.exe -o StrictHostKeyChecking=accept-new $package.FullName "${DeviceUser}@${DeviceHost}:/var/mobile/$($package.Name)"
 if ($LASTEXITCODE -ne 0) { throw "SCP aktarimi basarisiz oldu ($LASTEXITCODE)." }
 
-$audioRestart = if ($AudioDiscoverySession) {
-    " && /var/jb/usr/local/bin/k7-audio-probe-session 45 && sudo killall -9 mediaserverd"
-} elseif ($RestartAudioProbe) {
-    " && sudo killall -9 mediaserverd"
-} else { "" }
-$remote = "sudo dpkg --install /var/mobile/$($package.Name) && sleep 3 && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version' && sudo launchctl print system/com.k7bridge.gateway | grep -E 'state =|last exit code'${audioRestart}"
+$waitForGateway = 'ready=0; attempt=0; while [ "$attempt" -lt 70 ]; do if sudo launchctl print system/com.k7bridge.gateway 2>/dev/null | grep -q state.=.running; then ready=1; break; fi; attempt=$((attempt+1)); sleep 3; done; if [ "$ready" -ne 1 ]; then sudo launchctl print system/com.k7bridge.gateway 2>&1 | head -30; exit 1; fi'
+$remote = "sudo dpkg --install /var/mobile/$($package.Name) && $waitForGateway && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version' && sudo launchctl print system/com.k7bridge.gateway | grep state.="
 Write-Host 'Paket kuruluyor...'
 & ssh.exe -t "${DeviceUser}@${DeviceHost}" $remote
 if ($LASTEXITCODE -ne 0) { throw "Telefondaki kurulum basarisiz oldu ($LASTEXITCODE)." }

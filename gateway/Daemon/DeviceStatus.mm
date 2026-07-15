@@ -6,10 +6,31 @@
 #import <ifaddrs.h>
 #import <netinet/in.h>
 #import <arpa/inet.h>
+#import <dlfcn.h>
 
 static id K7ValueOrNull(id value) { return value?:[NSNull null]; }
 
-static NSNumber *K7SignalBars(CTTelephonyNetworkInfo *network) {
+static id K7Object(id object,NSString *name) {
+    SEL selector=NSSelectorFromString(name);
+    return object&&[object respondsToSelector:selector]?((id(*)(id,SEL))objc_msgSend)(object,selector):nil;
+}
+
+static id K7PrimarySIMInfo(id statusDomain) {
+    id data=K7Object(statusDomain,@"data");
+    for (NSString *name in @[@"primarySIMInfo",@"SIMOneInfo",@"SIMTwoInfo"]) {
+        id info=K7Object(data,name);
+        if (info) return info;
+    }
+    return nil;
+}
+
+static NSNumber *K7SignalBars(CTTelephonyNetworkInfo *network,id statusDomain) {
+    id statusInfo=K7PrimarySIMInfo(statusDomain);
+    SEL statusBarsSelector=NSSelectorFromString(@"signalStrengthBars");
+    if (statusInfo && [statusInfo respondsToSelector:statusBarsSelector]) {
+        NSInteger statusBars=((NSInteger(*)(id,SEL))objc_msgSend)(statusInfo,statusBarsSelector);
+        return @(MAX(0,MIN(4,statusBars)));
+    }
     SEL servicesSelector=NSSelectorFromString(@"serviceSignalStrength");
     id services=[network respondsToSelector:servicesSelector]?
         ((id(*)(id,SEL))objc_msgSend)(network,servicesSelector):nil;
@@ -59,6 +80,8 @@ static NSString *K7RadioName(NSString *technology) {
 
 @implementation K7DeviceStatus {
     CTTelephonyNetworkInfo *_network;
+    id _telephonyStatusDomain;
+    void *_statusKitHandle;
 }
 - (instancetype)init {
     if((self=[super init])) {
@@ -67,6 +90,13 @@ static NSString *K7RadioName(NSString *technology) {
         SEL query=NSSelectorFromString(@"queryCTSignalStrength");
         if ([_network respondsToSelector:query])
             ((void(*)(id,SEL))objc_msgSend)(_network,query);
+        Class domainClass=NSClassFromString(@"STTelephonyStatusDomain");
+        if (!domainClass) {
+            _statusKitHandle=dlopen("/System/Library/PrivateFrameworks/StatusKit.framework/StatusKit",
+                RTLD_LAZY|RTLD_LOCAL);
+            domainClass=NSClassFromString(@"STTelephonyStatusDomain");
+        }
+        if (domainClass) _telephonyStatusDomain=[domainClass new];
     }
     return self;
 }
@@ -82,11 +112,15 @@ static NSString *K7RadioName(NSString *technology) {
     NSData *gateData=[NSData dataWithContentsOfFile:@"/var/mobile/Library/K7Bridge/audio-gate.json"];
     NSDictionary *gate=gateData?[NSJSONSerialization JSONObjectWithData:gateData options:0 error:nil]:nil;
     NSString *thermal=@[@"nominal",@"fair",@"serious",@"critical"][(NSUInteger)MIN(NSProcessInfo.processInfo.thermalState,3)];
-    NSNumber *simReady=carrier?@(carrier.mobileNetworkCode.length>0):nil;
+    id simInfo=K7PrimarySIMInfo(_telephonyStatusDomain);
+    SEL simPresentSelector=NSSelectorFromString(@"isSIMPresent");
+    NSNumber *simReady=simInfo&&[simInfo respondsToSelector:simPresentSelector]?
+        @(((BOOL(*)(id,SEL))objc_msgSend)(simInfo,simPresentSelector)):
+        (carrier?@(carrier.mobileNetworkCode.length>0):nil);
     return @{
         @"carrier":K7ValueOrNull(carrier.carrierName),
         @"radioTechnology":K7ValueOrNull(radio),
-        @"signalBars":K7ValueOrNull(K7SignalBars(network)),
+        @"signalBars":K7ValueOrNull(K7SignalBars(network,_telephonyStatusDomain)),
         @"simReady":K7ValueOrNull(simReady),
         @"batteryLevel":K7ValueOrNull(battery),
         @"charging":K7ValueOrNull(charging),

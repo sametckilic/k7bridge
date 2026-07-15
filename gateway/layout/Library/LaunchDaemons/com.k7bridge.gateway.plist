@@ -6,7 +6,7 @@
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>5</integer>
+  <key>ExitTimeOut</key><integer>10</integer>
   <key>StandardOutPath</key><string>/var/mobile/Library/Logs/K7Bridge.log</string>
   <key>StandardErrorPath</key><string>/var/mobile/Library/Logs/K7Bridge.log</string>
 </dict></plist>
-

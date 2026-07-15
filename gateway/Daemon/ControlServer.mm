@@ -132,7 +132,10 @@
     return _hasAuthenticatedClient.load(std::memory_order_acquire);
 }
 - (void)stop {
-    dispatch_async(_queue,^{
+    // Complete listener cancellation before the daemon exits. Exiting while
+    // Network.framework still owns the listener can leave port 7443 unavailable
+    // for minutes and make launchd enter an exponential retry loop.
+    dispatch_sync(_queue,^{
         self->_hasAuthenticatedClient.store(false,std::memory_order_release);
         for (id connection in [self->_connections copy])
             nw_connection_cancel((nw_connection_t)connection);

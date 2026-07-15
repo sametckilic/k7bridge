@@ -106,7 +106,8 @@ try {
     Write-Host "Paket kuruluyor ve gateway yeniden başlatılıyor..."
     $resetCommand = if ($ResetPairing) { "sudo rm -f /var/mobile/Library/K7Bridge/pairing-state.json /var/mobile/Library/K7Bridge/pairing-url.txt && " } else { "" }
     $pairingOutput = if ($ResetPairing) { " && (for n in 1 2 3 4 5 6 7 8 9 10; do [ -s /var/mobile/Library/K7Bridge/pairing-url.txt ] && exit 0; sleep 1; done; exit 1) && echo '--- Yeni eşleştirme metni ---' && sudo cat /var/mobile/Library/K7Bridge/pairing-url.txt" } else { "" }
-    $remoteCommand = "${resetCommand}sudo dpkg --install /var/mobile/$($package.Name) && sleep 3 && echo '--- Kurulan gateway ---' && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version' && sudo launchctl print system/com.k7bridge.gateway | grep -E 'state =|last exit code' && echo '--- Gateway süreç sayısı ---' && pgrep -x k7bridged | wc -l${pairingOutput}"
+    $waitForGateway = 'ready=0; attempt=0; while [ "$attempt" -lt 70 ]; do if sudo launchctl print system/com.k7bridge.gateway 2>/dev/null | grep -q state.=.running; then ready=1; break; fi; attempt=$((attempt+1)); sleep 3; done; if [ "$ready" -ne 1 ]; then sudo launchctl print system/com.k7bridge.gateway 2>&1 | head -30; exit 1; fi'
+    $remoteCommand = "${resetCommand}sudo dpkg --install /var/mobile/$($package.Name) && $waitForGateway && echo '--- Kurulan gateway ---' && dpkg -s com.example.k7bridge.gateway | grep -E 'Status|Version' && sudo launchctl print system/com.k7bridge.gateway | grep -E 'state =|last exit code' && echo '--- Gateway süreç sayısı ---' && pgrep -x k7bridged | wc -l${pairingOutput}"
     & ssh -t "${DeviceUser}@${DeviceHost}" $remoteCommand
     if ($LASTEXITCODE -ne 0) { throw "Telefondaki kurulum başarısız." }
 

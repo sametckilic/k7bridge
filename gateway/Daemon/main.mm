@@ -357,7 +357,7 @@ int main(int argc,char **argv) { @autoreleasepool {
         [diagnostics recordComponent:@"daemon" level:@"info" event:@"graceful_shutdown" fields:@{}];
         [media stop];
         [server stop];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{ exit(0); });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{ exit(0); });
     });
     dispatch_resume(K7TerminationSource);
     NSLog(@"K7Bridge started on WSS port 7443; gateway id %@",pairing.gatewayID);
