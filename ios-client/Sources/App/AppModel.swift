@@ -21,6 +21,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var telephonyStatus: TelephonyBridgeStatus?
     @Published var diagnosticsNotice: String?
     @Published private(set) var microphoneMuted = false
+    @Published private(set) var speakerEnabled = false
+    @Published var callScreenPresented = false
 
     let connection = GatewayConnection()
     let calls = CallCoordinator()
@@ -77,14 +79,23 @@ final class AppModel: ObservableObject {
         calls.dialCommand = { [weak self] command in
             self?.call = GatewayCall(id: command.callId, handle: command.handle,
                                      displayName: self?.contacts.name(for: command.handle), state: .dialing)
+            self?.callScreenPresented = true
             self?.connection.send(type: "dial", payload: command)
         }
         calls.audioActivated = { [weak self] in self?.startMedia() }
         calls.audioDeactivated = { [weak self] in self?.media.stop() }
+        calls.muteChanged = { [weak self] muted in
+            guard let self else { return }
+            self.microphoneMuted = muted
+            self.media.setMuted(muted)
+            self.diagnostics.record(component: "media",
+                                    event: muted ? "microphone_muted" : "microphone_unmuted")
+        }
         pushes.onIncomingCall = { [weak self] call, done in
             let resolved = self?.resolvedIncoming(call) ?? call
             self?.call = GatewayCall(id: resolved.callId, handle: resolved.handle,
                                      displayName: resolved.displayName, state: .incoming)
+            self?.callScreenPresented = true
             self?.calls.reportIncoming(resolved) { error in
                 if let error { self?.errorMessage = error.localizedDescription }
                 done()
@@ -129,6 +140,7 @@ final class AppModel: ObservableObject {
             device = DeviceStatus()
             messages = []
             call = nil
+            callScreenPresented = false
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -185,9 +197,17 @@ final class AppModel: ObservableObject {
     func answer(_ callID: UUID) { calls.answer(callID) }
     func end(_ callID: UUID) { calls.end(callID) }
     func toggleMicrophoneMute() {
-        microphoneMuted.toggle()
-        media.setMuted(microphoneMuted)
-        diagnostics.record(component: "media", event: microphoneMuted ? "microphone_muted" : "microphone_unmuted")
+        guard let call else { return }
+        calls.setMuted(!microphoneMuted, callID: call.id)
+    }
+    func toggleSpeaker() {
+        let next = !speakerEnabled
+        do {
+            try media.setSpeakerEnabled(next)
+            speakerEnabled = next
+        } catch {
+            errorMessage = "Ses çıkışı değiştirilemedi: \(error.localizedDescription)"
+        }
     }
 
     func enableContacts() { contacts.requestAccess() }
@@ -267,6 +287,7 @@ final class AppModel: ObservableObject {
                                    fields: ["callId": value.callId.uuidString,
                                             "handlePresent": String(!value.handle.isEmpty)])
                 call = GatewayCall(id: value.callId, handle: value.handle, displayName: value.displayName, state: .incoming)
+                callScreenPresented = true
                 calls.reportIncoming(value)
             case "callUpdate":
                 let value = try JSONDecoder.k7.decode(ControlEnvelope<CallUpdatePayload>.self, from: data).payload
@@ -278,15 +299,21 @@ final class AppModel: ObservableObject {
                    calls.audioSessionActive { startMedia() }
                 if value.state == .ended || value.state == .failed {
                     media.stop()
+                    microphoneMuted = false
+                    speakerEnabled = false
                     Task { [weak self] in
                         try? await Task.sleep(for: .seconds(2))
-                        if self?.call?.id == value.callId { self?.call = nil }
+                        if self?.call?.id == value.callId {
+                            self?.call = nil
+                            self?.callScreenPresented = false
+                        }
                     }
                 }
             case "snapshot":
                 let value = try JSONDecoder.k7.decode(ControlEnvelope<SnapshotPayload>.self, from: data).payload
                 let previousCall = call
                 call = value.call
+                callScreenPresented = value.call != nil
                 if let current = call, let name = contacts.name(for: current.handle) {
                     call?.displayName = name
                 }

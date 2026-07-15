@@ -10,6 +10,7 @@ final class CallCoordinator: NSObject, ObservableObject {
     var dialCommand: ((DialCommand) -> Void)?
     var audioActivated: (() -> Void)?
     var audioDeactivated: (() -> Void)?
+    var muteChanged: ((Bool) -> Void)?
     var onError: ((Error) -> Void)?
     var onDiagnostic: ((String, String, [String: String]) -> Void)?
     private(set) var audioSessionActive = false
@@ -73,6 +74,10 @@ final class CallCoordinator: NSObject, ObservableObject {
 
     func end(_ callID: UUID) {
         request(CXEndCallAction(call: callID))
+    }
+
+    func setMuted(_ muted: Bool, callID: UUID) {
+        request(CXSetMutedCallAction(call: callID, muted: muted))
     }
 
     private func request(_ action: CXAction) {
@@ -146,6 +151,14 @@ extension CallCoordinator: CXProviderDelegate {
     }
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
         Task { @MainActor in provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: nil); action.fulfill() }
+    }
+    nonisolated func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+        Task { @MainActor in
+            diagnostic("mute_action", fields: ["callId": action.callUUID.uuidString,
+                                                "muted": String(action.isMuted)])
+            muteChanged?(action.isMuted)
+            action.fulfill()
+        }
     }
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
         Task { @MainActor in audioSessionActive = true; audioActivated?() }

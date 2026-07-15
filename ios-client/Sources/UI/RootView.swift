@@ -15,7 +15,7 @@ struct RootView: View {
         .controlSize(.large)
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
-        .fullScreenCover(item: $model.call) { _ in
+        .fullScreenCover(isPresented: $model.callScreenPresented) {
             ActiveCallScreen()
                 .environmentObject(model)
         }
@@ -202,15 +202,27 @@ private struct ActiveCallCard: View {
                     Text(call.state.turkishTitle).font(.body).foregroundStyle(.secondary)
                 }
                 if call.state == .active {
-                    Button {
-                        model.toggleMicrophoneMute()
-                    } label: {
-                        Label(model.microphoneMuted ? "Mikrofonu aç" : "Sessize al",
-                              systemImage: model.microphoneMuted ? "mic.slash.fill" : "mic.fill")
-                            .frame(maxWidth: .infinity, minHeight: 48)
+                    HStack(spacing: 12) {
+                        Button {
+                            model.toggleMicrophoneMute()
+                        } label: {
+                            Label(model.microphoneMuted ? "Mikrofonu aç" : "Sessize al",
+                                  systemImage: model.microphoneMuted ? "mic.slash.fill" : "mic.fill")
+                                .frame(maxWidth: .infinity, minHeight: 48)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(model.microphoneMuted ? .orange : .indigo)
+
+                        Button {
+                            model.toggleSpeaker()
+                        } label: {
+                            Label(model.speakerEnabled ? "Ahize" : "Hoparlör",
+                                  systemImage: model.speakerEnabled ? "speaker.wave.2.fill" : "speaker.fill")
+                                .frame(maxWidth: .infinity, minHeight: 48)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(model.speakerEnabled ? .orange : .indigo)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(model.microphoneMuted ? .orange : .indigo)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                         ForEach(["1","2","3","4","5","6","7","8","9","*","0","#"], id: \.self) { digit in
                             Button(digit) {

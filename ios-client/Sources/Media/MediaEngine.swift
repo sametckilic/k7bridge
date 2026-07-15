@@ -44,17 +44,29 @@ final class MediaEngine: @unchecked Sendable {
         stop()
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat,
-                                options: [.allowBluetooth, .defaultToSpeaker])
+                                options: [.allowBluetooth])
+        // CallKit owns route selection. Forcing speakerphone here made its route
+        // button lie and fed the remote voice straight back into our microphone.
+        try session.overrideOutputAudioPort(.none)
 
         let mediaKey = Self.deriveKey(sharedSecret: keyData, callId: callId)
         let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
-
         let input = engine.inputNode
+        do {
+            // Voice-chat mode does not by itself guarantee VoiceProcessingIO for
+            // AVAudioEngine. Explicit processing provides acoustic echo cancellation.
+            try input.setVoiceProcessingEnabled(true)
+            diagnostic("voice_processing_enabled")
+        } catch {
+            diagnostic("voice_processing_unavailable", level: "error",
+                       fields: ["error": error.localizedDescription])
+            throw MediaError.voiceProcessingUnavailable(error.localizedDescription)
+        }
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw MediaError.inputUnavailable
         }
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
 
         let currentGeneration = UUID()
         generation = currentGeneration
@@ -109,6 +121,11 @@ final class MediaEngine: @unchecked Sendable {
 
     func setMuted(_ value: Bool) {
         queue.async { [weak self] in self?.muted = value }
+    }
+
+    func setSpeakerEnabled(_ enabled: Bool) throws {
+        try AVAudioSession.sharedInstance().overrideOutputAudioPort(enabled ? .speaker : .none)
+        diagnostic("route_override_changed", fields: ["speaker": String(enabled)])
     }
 
     func stop() {
@@ -285,5 +302,12 @@ final class MediaEngine: @unchecked Sendable {
 
 enum MediaError: LocalizedError {
     case inputUnavailable
-    var errorDescription: String? { "Mikrofon ses biçimi kullanılamıyor." }
+    case voiceProcessingUnavailable(String)
+    var errorDescription: String? {
+        switch self {
+        case .inputUnavailable: return "Mikrofon ses biçimi kullanılamıyor."
+        case .voiceProcessingUnavailable(let detail):
+            return "Yankı engelleme başlatılamadı: \(detail)"
+        }
+    }
 }
