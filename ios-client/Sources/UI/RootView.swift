@@ -140,14 +140,14 @@ private struct CallsView: View {
                                         in: RoundedRectangle(cornerRadius: 22, style: .continuous))
 
                         Label(model.device.audioGatePassed
-                              ? "Ses fizibilite testi geçmiş; ancak PCM/Opus aktarımı bu build'e henüz bağlanmadı."
-                              : "Çağrı kontrolü denenebilir; çift yönlü görüşme sesi henüz hazır değil.",
-                              systemImage: "waveform.badge.exclamationmark")
+                              ? "Şifreli çift yönlü PCM medya kanalı hazır."
+                              : "Gateway ses servisi hazır değil; görüşme sesi açılmaz.",
+                              systemImage: model.device.audioGatePassed ? "waveform.badge.checkmark" : "waveform.badge.exclamationmark")
                             .font(.subheadline)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(model.device.audioGatePassed ? .green : .orange)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(18)
-                            .background(Color.orange.opacity(0.10),
+                            .background((model.device.audioGatePassed ? Color.green : Color.orange).opacity(0.10),
                                         in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                     }
                     .padding(.horizontal, 18)
@@ -202,6 +202,15 @@ private struct ActiveCallCard: View {
                     Text(call.state.turkishTitle).font(.body).foregroundStyle(.secondary)
                 }
                 if call.state == .active {
+                    Button {
+                        model.toggleMicrophoneMute()
+                    } label: {
+                        Label(model.microphoneMuted ? "Mikrofonu aç" : "Sessize al",
+                              systemImage: model.microphoneMuted ? "mic.slash.fill" : "mic.fill")
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(model.microphoneMuted ? .orange : .indigo)
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
                         ForEach(["1","2","3","4","5","6","7","8","9","*","0","#"], id: \.self) { digit in
                             Button(digit) {
@@ -352,8 +361,8 @@ private struct StatusView: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 K7SectionTitle(title: "Sistem hazırlığı")
                                 statusLine("Kontrol kanalı", value: model.connection.connected ? "Hazır" : "Hazır değil", good: model.connection.connected)
-                                statusLine("Ses fizibilite kapısı", value: model.device.audioGatePassed ? "Geçti" : "Test bekliyor", good: model.device.audioGatePassed)
-                                statusLine("PCM/Opus ses aktarımı", value: "Henüz uygulanmadı", good: false)
+                                statusLine("Ses fizibilite kapısı", value: model.device.audioGatePassed ? "Geçti" : "Hazır değil", good: model.device.audioGatePassed)
+                                statusLine("Şifreli PCM ses aktarımı", value: model.device.audioGatePassed ? "Hazır" : "Kapalı", good: model.device.audioGatePassed)
                                 statusLine("Sıcaklık", value: thermalText, good: model.device.thermalState == "nominal")
                                 if let date = model.lastStatusUpdate {
                                     Text("Son güncelleme: \(date.formatted(date: .omitted, time: .standard))")

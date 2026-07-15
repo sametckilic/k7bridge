@@ -2,8 +2,50 @@
 #import <CoreTelephony/CTCarrier.h>
 #import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #import <UIKit/UIKit.h>
+#import <objc/message.h>
+#import <ifaddrs.h>
+#import <netinet/in.h>
+#import <arpa/inet.h>
 
 static id K7ValueOrNull(id value) { return value?:[NSNull null]; }
+
+static NSNumber *K7SignalBars(CTTelephonyNetworkInfo *network) {
+    SEL servicesSelector=NSSelectorFromString(@"serviceSignalStrength");
+    id services=[network respondsToSelector:servicesSelector]?
+        ((id(*)(id,SEL))objc_msgSend)(network,servicesSelector):nil;
+    id info=[services isKindOfClass:NSDictionary.class]?[services allValues].firstObject:nil;
+    if (!info) {
+        SEL legacySelector=NSSelectorFromString(@"signalStrength");
+        info=[network respondsToSelector:legacySelector]?
+            ((id(*)(id,SEL))objc_msgSend)(network,legacySelector):nil;
+    }
+    for (NSString *name in @[@"displayBars",@"bars"]) {
+        SEL selector=NSSelectorFromString(name);
+        id value=info&&[info respondsToSelector:selector]?((id(*)(id,SEL))objc_msgSend)(info,selector):nil;
+        if ([value isKindOfClass:NSNumber.class])
+            return @(MAX(0,MIN(4,[value integerValue])));
+    }
+    return nil;
+}
+
+static NSNumber *K7HotspotEnabled(void) {
+    struct ifaddrs *interfaces=NULL;
+    if (getifaddrs(&interfaces)!=0) return nil;
+    BOOL enabled=NO;
+    for (struct ifaddrs *item=interfaces;item;item=item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family!=AF_INET) continue;
+        struct sockaddr_in *address=(struct sockaddr_in *)item->ifa_addr;
+        char buffer[INET_ADDRSTRLEN]={0};
+        if (!inet_ntop(AF_INET,&address->sin_addr,buffer,sizeof(buffer))) continue;
+        if (strcmp(buffer,"172.20.10.1")==0 ||
+            (item->ifa_name && strcmp(item->ifa_name,"bridge100")==0)) {
+            enabled=YES;
+            break;
+        }
+    }
+    freeifaddrs(interfaces);
+    return @(enabled);
+}
 
 static NSString *K7RadioName(NSString *technology) {
     if (!technology.length) return nil;
@@ -15,14 +57,22 @@ static NSString *K7RadioName(NSString *technology) {
     return technology.lastPathComponent;
 }
 
-@implementation K7DeviceStatus
+@implementation K7DeviceStatus {
+    CTTelephonyNetworkInfo *_network;
+}
 - (instancetype)init {
-    if((self=[super init])) [UIDevice currentDevice].batteryMonitoringEnabled=YES;
+    if((self=[super init])) {
+        [UIDevice currentDevice].batteryMonitoringEnabled=YES;
+        _network=[CTTelephonyNetworkInfo new];
+        SEL query=NSSelectorFromString(@"queryCTSignalStrength");
+        if ([_network respondsToSelector:query])
+            ((void(*)(id,SEL))objc_msgSend)(_network,query);
+    }
     return self;
 }
 
 - (NSDictionary *)snapshot {
-    CTTelephonyNetworkInfo *network=[CTTelephonyNetworkInfo new];
+    CTTelephonyNetworkInfo *network=_network?:[CTTelephonyNetworkInfo new];
     CTCarrier *carrier=network.serviceSubscriberCellularProviders.allValues.firstObject;
     NSString *radio=K7RadioName(network.serviceCurrentRadioAccessTechnology.allValues.firstObject);
     UIDevice *device=[UIDevice currentDevice];
@@ -36,12 +86,12 @@ static NSString *K7RadioName(NSString *technology) {
     return @{
         @"carrier":K7ValueOrNull(carrier.carrierName),
         @"radioTechnology":K7ValueOrNull(radio),
-        @"signalBars":[NSNull null],
+        @"signalBars":K7ValueOrNull(K7SignalBars(network)),
         @"simReady":K7ValueOrNull(simReady),
         @"batteryLevel":K7ValueOrNull(battery),
         @"charging":K7ValueOrNull(charging),
         @"thermalState":thermal,
-        @"hotspotEnabled":[NSNull null],
+        @"hotspotEnabled":K7ValueOrNull(K7HotspotEnabled()),
         @"clientConnected":[NSNull null],
         @"audioGatePassed":@([gate[@"passed"]boolValue])
     };

@@ -10,3 +10,8 @@ presentation only; the one-time code and X25519 key agreement provide pairing.
 
 Private selectors are resolved dynamically because they vary by iOS build. Their
 presence and behavior must be verified on the exact phone before everyday use.
+
+The package does not install an audio tweak. `k7bridged` listens on UDP 7444, captures
+the active cellular downlink with an entitled `ATAudioTap`, and schedules authenticated
+client PCM through the runtime-checked telephony uplink route. If either route is
+missing, `audioGatePassed` remains false and the media session does not start.

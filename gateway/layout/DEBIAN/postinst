@@ -4,20 +4,38 @@ if [ "$1" = "configure" ]; then
     mkdir -p /var/mobile/Library/K7Bridge
     mkdir -p /var/mobile/Library/Logs/K7Bridge
     chmod 755 /var/mobile/Library/Logs/K7Bridge 2>/dev/null || true
-    printf '{"expiresAt":0}\n' > /var/mobile/Library/K7Bridge/audio-probe-session.json
-    touch /var/mobile/Library/K7Bridge/audio-probe-result.jsonl
-    chown mobile:mobile /var/mobile/Library/K7Bridge/audio-probe-session.json \
-        /var/mobile/Library/K7Bridge/audio-probe-result.jsonl 2>/dev/null || true
-    chmod 600 /var/mobile/Library/K7Bridge/audio-probe-session.json \
-        /var/mobile/Library/K7Bridge/audio-probe-result.jsonl 2>/dev/null || true
+
+    # Remove opt-in flags left by the abandoned AudioUnit/Frida discovery builds.
+    # The shipping package must never inject a guessed hook into mediaserverd.
+    stale_audio_probe=0
+    if [ -e /var/mobile/Library/K7Bridge/audio-probe.enabled ] || \
+       [ -e /var/mobile/Library/K7Bridge/audio-callback-probe.enabled ]; then
+        stale_audio_probe=1
+    fi
+    rm -f /var/mobile/Library/K7Bridge/audio-probe.enabled \
+        /var/mobile/Library/K7Bridge/audio-callback-probe.enabled \
+        /var/mobile/Library/K7Bridge/audio-probe-session.json \
+        /var/mobile/Library/K7Bridge/audio-probe-result.jsonl
 
     # Fully unload the previous listener before starting the replacement. A direct
     # kickstart can race the old process and leave the new daemon without port 7443.
     launchctl bootout system/com.k7bridge.gateway 2>/dev/null || true
-    killall -9 k7bridged 2>/dev/null || true
-    sleep 1
+    for attempt in 1 2 3; do
+        pgrep -x k7bridged >/dev/null 2>&1 || break
+        sleep 1
+    done
+    if pgrep -x k7bridged >/dev/null 2>&1; then
+        killall -9 k7bridged 2>/dev/null || true
+        sleep 1
+    fi
     launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.k7bridge.gateway.plist 2>/dev/null || true
     launchctl kickstart system/com.k7bridge.gateway 2>/dev/null || true
+
+    # A running process keeps an already-loaded dylib mapped after dpkg removes it.
+    # Restart mediaserverd once only when an old probe flag proves it was enabled.
+    if [ "$stale_audio_probe" -eq 1 ]; then
+        killall -9 mediaserverd 2>/dev/null || true
+    fi
 
     # Do not restart SpringBoard from a package transaction. The tweak is activated
     # at the next controlled respring after its build has been verified on-device.

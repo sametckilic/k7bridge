@@ -6,13 +6,16 @@
 #import "RelayClient.h"
 #import "DeviceStatus.h"
 #import "Diagnostics.h"
+#import "MediaServer.h"
 #import "../Shared/BridgeIPC.h"
 #import <sodium.h>
 #import <unistd.h>
 #import <fcntl.h>
 #import <sys/file.h>
+#import <signal.h>
 
 static NSString *const K7DataDirectory=@"/var/mobile/Library/K7Bridge";
+static dispatch_source_t K7TerminationSource;
 
 static NSString *K7LocalHost(void) {
     char name[256]={0};
@@ -61,6 +64,7 @@ int main(int argc,char **argv) { @autoreleasepool {
     K7SMSStore *sms=[K7SMSStore new];
     K7Pairing *pairing=[K7Pairing new];
     K7DeviceStatus *deviceStatus=[K7DeviceStatus new];
+    K7MediaServer *media=[K7MediaServer new];
     NSData *identity=[NSData dataWithContentsOfFile:[K7DataDirectory stringByAppendingPathComponent:@"identity.p12"]];
     NSString *password=[NSString stringWithContentsOfFile:[K7DataDirectory stringByAppendingPathComponent:@"identity.password"]
         encoding:NSUTF8StringEncoding error:nil];
@@ -73,13 +77,24 @@ int main(int argc,char **argv) { @autoreleasepool {
     __block K7ControlServer *server;
     __block NSData *sharedKey=pairing.pairedSharedKey;
     __block NSDate *lastTelephonyHeartbeat;
+    __block NSDate *lastClientHeartbeat;
+    __block NSDate *callBecameUnattendedAt;
     __block NSDictionary *lastTelephonyStatus=@{};
+    __block NSDictionary *lastDeviceSnapshot;
+    NSError *mediaError=nil;
+    if (![media start:&mediaError]) {
+        [diagnostics recordComponent:@"media" level:@"error" event:@"server_failed"
+            fields:@{@"error":mediaError.localizedDescription?:@"unknown"}];
+    }
     NSDictionary *(^statusSnapshot)(void)=^NSDictionary *{
         NSMutableDictionary *snapshot=[[deviceStatus snapshot] mutableCopy];
-        snapshot[@"clientConnected"]=@YES;
+        BOOL clientAlive=server.hasAuthenticatedClient && lastClientHeartbeat &&
+            [[NSDate date] timeIntervalSinceDate:lastClientHeartbeat]<15;
+        snapshot[@"clientConnected"]=@(clientAlive);
         BOOL telephonyAlive=lastTelephonyHeartbeat && [[NSDate date] timeIntervalSinceDate:lastTelephonyHeartbeat]<5;
         snapshot[@"telephonyBridgeReady"]=@(telephonyAlive);
         snapshot[@"callObservationReady"]=telephonyAlive?(lastTelephonyStatus[@"callObservationReady"]?:@NO):@NO;
+        snapshot[@"audioGatePassed"]=@(media.isReady);
         return snapshot;
     };
 
@@ -96,6 +111,7 @@ int main(int argc,char **argv) { @autoreleasepool {
             BOOL ok=[pairing consumeCode:payload[@"oneTimeCode"] clientPublicKey:clientKey sharedKey:&sharedKey];
             if (!ok) return K7Error(@"pair_failed",@"Pairing code or client key is invalid");
             lastIncomingSequence=0;
+            lastClientHeartbeat=[NSDate date];
             return K7Response(@"pairResult",@{@"gatewayId":pairing.gatewayID});
         }
 
@@ -126,6 +142,7 @@ int main(int argc,char **argv) { @autoreleasepool {
             return K7Error(@"unauthorized",@"Authentication or sequence check failed");
         }
         lastIncomingSequence=incoming;
+        lastClientHeartbeat=[NSDate date];
 
         NSError *error=nil;
         if ([type isEqual:@"diagnosticsRequest"]) {
@@ -152,7 +169,7 @@ int main(int argc,char **argv) { @autoreleasepool {
                 if (![result[@"ok"] boolValue]) {
                     error=K7CommandError(result[@"error"]?:@"Telephony bridge is unavailable");
                     [state transition:K7CallStateFailed error:nil];
-                }
+                } else [media setActiveCall:callID sharedKey:sharedKey];
             }
         } else if ([@[@"answer",@"reject",@"end",@"dtmf"] containsObject:type]) {
             NSUUID *callID=K7UUID(payload[@"callId"]);
@@ -165,6 +182,8 @@ int main(int argc,char **argv) { @autoreleasepool {
                 NSDictionary *result=[K7BridgeIPC send:@{@"type":type,@"payload":payload}
                     toPort:@"com.k7bridge.telephony" timeout:2];
                 if (![result[@"ok"] boolValue]) error=K7CommandError(result[@"error"]?:@"Telephony bridge is unavailable");
+                else if ([type isEqual:@"answer"]) [media setActiveCall:callID sharedKey:sharedKey];
+                else if ([type isEqual:@"reject"] || [type isEqual:@"end"]) [media setActiveCall:nil sharedKey:nil];
             }
         } else if ([type isEqual:@"smsList"]) {
             NSUInteger limit=[payload[@"limit"] unsignedIntegerValue];
@@ -278,12 +297,14 @@ int main(int argc,char **argv) { @autoreleasepool {
                 if (state.state==K7CallStateConnecting) [state transition:K7CallStateActive error:nil];
                 else if (state.state!=K7CallStateActive)
                     return @{@"ok":@NO,@"error":@"invalid active transition"};
+                [media setActiveCall:identifier sharedKey:sharedKey];
             } else if ([next isEqual:@"ended"]) {
                 if (state.state!=K7CallStateEnded && ![state transition:K7CallStateEnded error:nil])
                     return @{@"ok":@NO,@"error":@"invalid ended transition"};
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{
                     [state transition:K7CallStateIdle error:nil];
                 });
+                [media setActiveCall:nil sharedKey:nil];
             } else return @{@"ok":@NO,@"error":@"unsupported call state"};
             NSLog(@"K7Bridge call %@ -> %@",identifier.UUIDString,next);
             [diagnostics recordComponent:@"call" level:@"info" event:@"state_changed"
@@ -297,8 +318,48 @@ int main(int argc,char **argv) { @autoreleasepool {
     }];
 
     [NSTimer scheduledTimerWithTimeInterval:30 repeats:YES block:^(NSTimer *timer) {
-        [server broadcastType:@"deviceStatus" payload:statusSnapshot()];
+        NSDictionary *snapshot=statusSnapshot();
+        [server broadcastType:@"deviceStatus" payload:snapshot];
+        if (!lastDeviceSnapshot || ![lastDeviceSnapshot isEqual:snapshot]) {
+            lastDeviceSnapshot=[snapshot copy];
+            [diagnostics recordComponent:@"device" level:@"info" event:@"status_changed" fields:snapshot];
+        }
     }];
+    [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {
+        // Ringing is allowed to continue while PushKit/CallKit wakes the client.
+        // The safety timeout only applies after a call has been answered.
+        BOOL hasActiveCall=state.state==K7CallStateConnecting || state.state==K7CallStateActive;
+        if (!hasActiveCall) {
+            callBecameUnattendedAt=nil;
+            return;
+        }
+        if ([statusSnapshot()[@"clientConnected"] boolValue]) {
+            callBecameUnattendedAt=nil;
+            return;
+        }
+        if (!callBecameUnattendedAt) {
+            callBecameUnattendedAt=[NSDate date];
+            return;
+        }
+        if ([[NSDate date] timeIntervalSinceDate:callBecameUnattendedAt]<20) return;
+        NSUUID *callID=state.callID;
+        callBecameUnattendedAt=[NSDate date];
+        if (!callID) return;
+        [diagnostics recordComponent:@"call" level:@"warning" event:@"client_timeout_end_requested"
+            fields:@{@"callId":callID.UUIDString}];
+        [K7BridgeIPC send:@{@"type":@"end",@"payload":@{@"callId":callID.UUIDString}}
+            toPort:@"com.k7bridge.telephony" timeout:2];
+    }];
+    signal(SIGTERM,SIG_IGN);
+    K7TerminationSource=dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL,SIGTERM,0,
+        dispatch_get_main_queue());
+    dispatch_source_set_event_handler(K7TerminationSource,^{
+        [diagnostics recordComponent:@"daemon" level:@"info" event:@"graceful_shutdown" fields:@{}];
+        [media stop];
+        [server stop];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,500*NSEC_PER_MSEC),dispatch_get_main_queue(),^{ exit(0); });
+    });
+    dispatch_resume(K7TerminationSource);
     NSLog(@"K7Bridge started on WSS port 7443; gateway id %@",pairing.gatewayID);
     [diagnostics recordComponent:@"daemon" level:@"info" event:@"gateway_ready"
         fields:@{@"port":@7443,@"gatewayId":pairing.gatewayID?:@"unknown"}];

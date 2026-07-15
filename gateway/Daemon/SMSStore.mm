@@ -31,12 +31,21 @@ static NSString *const K7SMSPath = @"/var/mobile/Library/SMS/sms.db";
 }
 - (BOOL)sendText:(NSString *)text toAddress:(NSString *)address error:(NSError **)error {
     Class cls = NSClassFromString(@"CTMessageCenter"); SEL shared = NSSelectorFromString(@"sharedMessageCenter");
-    SEL send = NSSelectorFromString(@"sendSMSWithText:serviceCenter:toAddress:");
     if (!cls || ![cls respondsToSelector:shared]) return [self unavailable:error];
     id center = ((id(*)(id,SEL))objc_msgSend)(cls, shared);
-    if (![center respondsToSelector:send]) return [self unavailable:error];
-    BOOL result = ((BOOL(*)(id,SEL,id,id,id))objc_msgSend)(center, send, text, nil, address);
-    if (!result && error) *error = [NSError errorWithDomain:@"K7SMS" code:2 userInfo:@{NSLocalizedDescriptionKey:@"CoreTelephony rejected SMS"}];
+    BOOL result=NO;
+    unsigned int trackingID=0;
+    SEL tracked=NSSelectorFromString(@"sendSMSWithText:serviceCenter:toAddress:trackingID:");
+    SEL basic=NSSelectorFromString(@"sendSMSWithText:serviceCenter:toAddress:");
+    if ([center respondsToSelector:tracked]) {
+        result=((BOOL(*)(id,SEL,id,id,id,unsigned int *))objc_msgSend)(center,tracked,
+            text,nil,address,&trackingID);
+    } else if ([center respondsToSelector:basic]) {
+        result=((BOOL(*)(id,SEL,id,id,id))objc_msgSend)(center,basic,text,nil,address);
+    } else return [self unavailable:error];
+    if (!result && error) *error = [NSError errorWithDomain:@"K7SMS" code:2 userInfo:@{
+        NSLocalizedDescriptionKey:@"CoreTelephony SMS isteğini reddetti"}];
+    NSLog(@"K7Bridge SMS submission %@ tracking id %u",result?@"accepted":@"rejected",trackingID);
     return result;
 }
 - (BOOL)unavailable:(NSError **)error { if (error) *error = [NSError errorWithDomain:@"K7SMS" code:1 userInfo:@{NSLocalizedDescriptionKey:@"CTMessageCenter unavailable on this build"}]; return NO; }

@@ -19,16 +19,17 @@ non-jailbroken iPhone. The repository contains four independently testable parts
 - `relay/`: opaque VoIP-push relay for an always-on Render Web Service.
 - `shared/`: versioned wire protocol and test fixtures.
 
-## Safety gate
+## Audio safety gate
 
-The cellular audio bridge is deliberately fail-closed. `AudioBridge` only emits
-diagnostics until the scripts under `gateway/probes/` have identified and verified
-the actual iOS 15 audio path on the target phone. Do not enable injection by guessing
-symbols: a wrong hook can crash `mediaserverd` and interrupt every audio service.
+The abandoned AudioUnit/Frida experiment is not shipped. It guessed a render hook and
+could crash `mediaserverd`. The current design keeps all media work in `k7bridged`:
 
-The gate passes only after a 30-minute cellular call proves both downlink capture and
-uplink replacement without a process crash. Call control, SMS and status work can be
-tested separately, but they do not constitute a completed voice gateway.
+- downlink: entitled iOS 15 `ATAudioTap`, verified on the target iPhone at 16 kHz;
+- uplink: `AVAudioPlayer`'s runtime-checked telephony-uplink route;
+- transport: call-derived ChaCha20-Poly1305 UDP packets, 16 kHz mono PCM, 20 ms.
+
+The daemon fails closed when either private route is absent. A 30-minute physical call
+is still required before calling the audio gate production-qualified.
 
 ## Repository bootstrap
 
@@ -54,7 +55,7 @@ See each component README for deployment and device-test instructions.
 | TLS WebSocket gateway, call state machine and SMS read/send | Implemented; private selectors require device verification |
 | Incoming-call observation and encrypted VoIP push request | Implemented; requires paired physical devices |
 | Carrier, radio, SIM, battery, thermal and audio-gate status | Implemented; signal bars/hotspot remain conservative when private APIs are unavailable |
-| Bidirectional cellular PCM/Opus bridge | Blocked by the mandatory physical-device audio gate |
+| Bidirectional cellular audio bridge | Encrypted PCM implemented; 30-minute device acceptance pending |
 | Automatic hotspot activation | Not enabled without a verified iOS 15 selector; manual fallback is required |
 
 ## First device run
@@ -62,7 +63,6 @@ See each component README for deployment and device-test instructions.
 1. Deploy and test `relay/`, then put its HTTPS URL into the provisioning command.
 2. Build/install `gateway/`, provision its TLS identity, and restart the launch daemon.
 3. Inspect the daemon log and paste or scan `pairing-url.txt` in the client.
-4. Verify call control, SMS and status without enabling `K7AudioBridge`.
-5. Run the audio probe and satisfy the 30-minute gate before adding the exact hook.
-6. Only after the gate passes, enable Opus packet production in both media engines and
-   run the loss, latency and route-change acceptance suite.
+4. Grant microphone access on the new iPhone and verify one two-way call.
+5. Run the 30-minute audio, loss, latency and route-change acceptance suite.
+6. Replace PCM with Opus only after the verified PCM baseline is stable.

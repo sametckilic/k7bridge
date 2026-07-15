@@ -2,6 +2,7 @@
 #import "Diagnostics.h"
 #import <Network/Network.h>
 #import <Security/Security.h>
+#import <atomic>
 
 @interface K7ControlServer () @property(nonatomic,copy) K7ControlHandler handler; @end
 @implementation K7ControlServer {
@@ -13,6 +14,7 @@
     NSMutableSet *_connections;
     NSMutableSet *_authenticatedConnections;
     dispatch_queue_t _queue;
+    std::atomic<bool> _hasAuthenticatedClient;
 }
 - (void)log:(NSString *)event level:(NSString *)level fields:(NSDictionary *)fields {
     [[K7Diagnostics shared] recordComponent:@"control" level:level event:event fields:fields];
@@ -21,6 +23,7 @@
     if ((self=[super init])) {
         _port=port; _pkcs12=pkcs12; _password=[password copy]; _handler=[handler copy];
         _connections=[NSMutableSet set]; _authenticatedConnections=[NSMutableSet set];
+        _hasAuthenticatedClient.store(false,std::memory_order_relaxed);
         _queue=dispatch_queue_create("com.k7bridge.control",DISPATCH_QUEUE_SERIAL);
     }
     return self;
@@ -116,12 +119,30 @@
     }
     [_authenticatedConnections removeAllObjects];
     [_authenticatedConnections addObject:connection];
+    _hasAuthenticatedClient.store(true,std::memory_order_release);
     NSLog(@"K7Bridge control connection authenticated");
     [self log:@"connection_authenticated" level:@"info" fields:@{}];
 }
 - (void)forget:(nw_connection_t)connection {
     [_authenticatedConnections removeObject:connection];
     [_connections removeObject:connection];
+    _hasAuthenticatedClient.store(_authenticatedConnections.count>0,std::memory_order_release);
+}
+- (BOOL)hasAuthenticatedClient {
+    return _hasAuthenticatedClient.load(std::memory_order_acquire);
+}
+- (void)stop {
+    dispatch_async(_queue,^{
+        self->_hasAuthenticatedClient.store(false,std::memory_order_release);
+        for (id connection in [self->_connections copy])
+            nw_connection_cancel((nw_connection_t)connection);
+        [self->_authenticatedConnections removeAllObjects];
+        [self->_connections removeAllObjects];
+        if (self->_listener) {
+            nw_listener_cancel(self->_listener);
+            self->_listener=nil;
+        }
+    });
 }
 - (void)broadcastType:(NSString *)type payload:(NSDictionary *)payload {
     if (!type.length) return;

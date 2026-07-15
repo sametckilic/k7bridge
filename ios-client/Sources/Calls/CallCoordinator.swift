@@ -12,6 +12,7 @@ final class CallCoordinator: NSObject, ObservableObject {
     var audioDeactivated: (() -> Void)?
     var onError: ((Error) -> Void)?
     var onDiagnostic: ((String, String, [String: String]) -> Void)?
+    private(set) var audioSessionActive = false
     private var incomingCallIDs: Set<UUID> = []
     private var incomingOriginIDs: Set<UUID> = []
     private var reportedCallIDs: Set<UUID> = []
@@ -124,7 +125,8 @@ final class CallCoordinator: NSObject, ObservableObject {
 extension CallCoordinator: CXProviderDelegate {
     nonisolated func providerDidReset(_ provider: CXProvider) {
         Task { @MainActor in
-            incomingCallIDs.removeAll(); incomingOriginIDs.removeAll(); reportedCallIDs.removeAll(); audioDeactivated?()
+            incomingCallIDs.removeAll(); incomingOriginIDs.removeAll(); reportedCallIDs.removeAll()
+            audioSessionActive = false; audioDeactivated?()
         }
     }
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
@@ -145,8 +147,12 @@ extension CallCoordinator: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
         Task { @MainActor in provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: nil); action.fulfill() }
     }
-    nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) { Task { @MainActor in audioActivated?() } }
-    nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) { Task { @MainActor in audioDeactivated?() } }
+    nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        Task { @MainActor in audioSessionActive = true; audioActivated?() }
+    }
+    nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        Task { @MainActor in audioSessionActive = false; audioDeactivated?() }
+    }
 }
 
 enum CallError: LocalizedError { case invalidNumber

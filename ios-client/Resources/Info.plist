@@ -14,6 +14,7 @@
   <key>UILaunchScreen</key><dict/>
   <key>NSCameraUsageDescription</key><string>Gateway eşleştirme QR kodunu taramak için kamera kullanılır.</string>
   <key>NSContactsUsageDescription</key><string>Arayan kişilerin adını göstermek ve rehberden numara seçmek için rehber kullanılır.</string>
+  <key>NSMicrophoneUsageDescription</key><string>GSM görüşmesinde sesinizi eski iPhone üzerinden karşı tarafa iletmek için mikrofon kullanılır.</string>
   <key>NSLocalNetworkUsageDescription</key><string>GSM gateway ile çağrı, ses, SMS ve durum verisi alışverişi yapılır.</string>
   <key>NSBonjourServices</key><array><string>_k7bridge._tcp</string></array>
   <key>UIBackgroundModes</key><array><string>voip</string><string>audio</string><string>remote-notification</string></array>

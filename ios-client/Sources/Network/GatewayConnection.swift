@@ -11,6 +11,7 @@ final class GatewayConnection: NSObject, ObservableObject {
     @Published private(set) var lastMessageAt: Date?
 
     var connected: Bool { phase.isOnline }
+    var mediaHost: String? { activeHost ?? pairing?.document.host }
     var onMessage: ((String, Data) -> Void)?
     var onReady: (() -> Void)?
     var onProtocolError: ((String) -> Void)?

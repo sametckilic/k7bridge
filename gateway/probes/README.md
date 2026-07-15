@@ -2,17 +2,16 @@
 
 1. Keep the gateway disconnected from production use and make a test call with a
    consenting second party.
-2. Install Frida on the palera1n phone. Attach `audio-discovery.js` separately to
-   `mediaserverd`, `SpringBoard` (the verified full-lifecycle call target on this iPhone 7/iOS 15.7.5), and `CommCenter`;
-   store each JSON message and the
-   exact iOS build number.
-3. Use the trace to create a build-specific hook in a separate branch. The discovery
-   script itself is read-only and cannot pass the gate.
-4. Prove downlink capture, uplink replacement, and simultaneous operation for at
+2. Do not attach Frida to `mediaserverd`; two discovery attempts on the target build
+   crashed that process. Confirm `k7-audio-tap-check` captures 16 kHz system PCM and
+   record the exact iOS build number.
+3. Confirm the daemon reports both `ATAudioTap` and `AVAudioPlayer.mixToUplink` as
+   available before placing a call.
+4. Prove downlink capture, uplink injection, and simultaneous operation for at
    least 1,800 seconds. Hash the exact hook dylib used in the test.
 5. Fill `report.template.json`, run `verify_audio_gate.py`, copy the resulting file to
    `/var/mobile/Library/K7Bridge/audio-gate.json`, and keep the signed report.
 
-The checked-in `AudioBridge` still contains no guessed hook. Once the report exists,
-implement only the symbols and buffer formats proven by that report, then bind startup
-to both the OS build and dylib hash stored in the gate.
+The shipping package contains no `K7AudioBridge` dylib. Keep it that way unless a future
+OS build removes the safer daemon-owned routes and a replacement is independently
+verified.

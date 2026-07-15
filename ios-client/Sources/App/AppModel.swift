@@ -20,6 +20,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var gatewayDiagnostics: [DiagnosticEntry] = []
     @Published private(set) var telephonyStatus: TelephonyBridgeStatus?
     @Published var diagnosticsNotice: String?
+    @Published private(set) var microphoneMuted = false
 
     let connection = GatewayConnection()
     let calls = CallCoordinator()
@@ -70,11 +71,15 @@ final class AppModel: ObservableObject {
         calls.onDiagnostic = { [weak self] event, level, fields in
             self?.diagnostics.record(component: "callkit", event: event, level: level, fields: fields)
         }
+        media.onDiagnostic = { [weak self] event, level, fields in
+            self?.diagnostics.record(component: "media", event: event, level: level, fields: fields)
+        }
         calls.dialCommand = { [weak self] command in
             self?.call = GatewayCall(id: command.callId, handle: command.handle,
                                      displayName: self?.contacts.name(for: command.handle), state: .dialing)
             self?.connection.send(type: "dial", payload: command)
         }
+        calls.audioActivated = { [weak self] in self?.startMedia() }
         calls.audioDeactivated = { [weak self] in self?.media.stop() }
         pushes.onIncomingCall = { [weak self] call, done in
             let resolved = self?.resolvedIncoming(call) ?? call
@@ -87,6 +92,7 @@ final class AppModel: ObservableObject {
             self?.connect()
         }
         pushes.onToken = { [weak self] token in Task { await self?.registerPushToken(token) } }
+        media.requestMicrophonePermission()
         connect()
     }
 
@@ -178,6 +184,11 @@ final class AppModel: ObservableObject {
 
     func answer(_ callID: UUID) { calls.answer(callID) }
     func end(_ callID: UUID) { calls.end(callID) }
+    func toggleMicrophoneMute() {
+        microphoneMuted.toggle()
+        media.setMuted(microphoneMuted)
+        diagnostics.record(component: "media", event: microphoneMuted ? "microphone_muted" : "microphone_unmuted")
+    }
 
     func enableContacts() { contacts.requestAccess() }
 
@@ -263,7 +274,10 @@ final class AppModel: ObservableObject {
                                    fields: ["callId": value.callId.uuidString, "state": value.state.rawValue])
                 if call?.id == value.callId { call?.state = value.state }
                 calls.reportUpdate(value)
+                if value.state == .active || value.state == .connecting,
+                   calls.audioSessionActive { startMedia() }
                 if value.state == .ended || value.state == .failed {
+                    media.stop()
                     Task { [weak self] in
                         try? await Task.sleep(for: .seconds(2))
                         if self?.call?.id == value.callId { self?.call = nil }
@@ -278,6 +292,8 @@ final class AppModel: ObservableObject {
                 }
                 device = value.device
                 lastStatusUpdate = Date()
+                if value.call == nil { media.stop() }
+                else if calls.audioSessionActive { startMedia() }
                 if let previousCall, value.call?.id != previousCall.id {
                     calls.reportUpdate(CallUpdatePayload(callId: previousCall.id, state: .ended,
                                                          reason: "gateway_snapshot"))
@@ -340,7 +356,7 @@ final class AppModel: ObservableObject {
             "relaySecret": pairing.document.relaySecret,
             "deviceToken": token,
             "bundleId": Bundle.main.bundleIdentifier ?? "",
-            "environment": "production"
+            "environment": pushEnvironment
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         do {
@@ -349,5 +365,29 @@ final class AppModel: ObservableObject {
         } catch {
             errorMessage = "Push kaydı başarısız: \(error.localizedDescription)"
         }
+    }
+
+    private func startMedia() {
+        guard calls.audioSessionActive, let call, let pairing,
+              let host = connection.mediaHost else {
+            diagnostics.record(component: "media", event: "start_deferred", level: "warning")
+            return
+        }
+        guard !media.isConfigured(for: call.id) else { return }
+        do {
+            try media.configure(host: host, port: 7444, keyData: pairing.sharedSecret, callId: call.id)
+        } catch {
+            errorMessage = "Ses bağlantısı başlatılamadı: \(error.localizedDescription)"
+            diagnostics.record(component: "media", event: "session_start_failed", level: "error",
+                               fields: ["error": error.localizedDescription])
+        }
+    }
+
+    private var pushEnvironment: String {
+#if DEBUG
+        "development"
+#else
+        "production"
+#endif
     }
 }
