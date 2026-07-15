@@ -3,6 +3,46 @@
 
 static NSString *const K7DiagnosticsDirectory=@"/var/mobile/Library/Logs/K7Bridge";
 static const unsigned long long K7DiagnosticsMaximumBytes=2*1024*1024;
+static const unsigned long long K7DiagnosticsMaximumReadBytes=512*1024;
+
+static NSArray<NSDictionary *> *K7ReadRecentEntries(NSString *path,NSUInteger limit) {
+    if (!path.length || !limit) return @[];
+
+    NSNumber *sizeValue=[[[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil]
+        objectForKey:NSFileSize];
+    unsigned long long size=sizeValue.unsignedLongLongValue;
+    if (!size) return @[];
+
+    unsigned long long offset=size>K7DiagnosticsMaximumReadBytes
+        ? size-K7DiagnosticsMaximumReadBytes : 0;
+    NSFileHandle *handle=[NSFileHandle fileHandleForReadingAtPath:path];
+    if (!handle) return @[];
+    @try {
+        [handle seekToFileOffset:offset];
+    } @catch (__unused NSException *exception) {
+        [handle closeFile];
+        return @[];
+    }
+    NSData *data=[handle readDataToEndOfFile];
+    [handle closeFile];
+    if (!data.length) return @[];
+
+    NSString *text=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!text.length) return @[];
+    NSArray<NSString *> *lines=[text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    NSInteger firstCompleteLine=offset>0 ? 1 : 0;
+    NSMutableArray<NSDictionary *> *newestFirst=[NSMutableArray arrayWithCapacity:limit];
+    for (NSInteger index=(NSInteger)lines.count-1;
+         index>=firstCompleteLine && newestFirst.count<limit;
+         index--) {
+        NSString *line=lines[(NSUInteger)index];
+        if (!line.length) continue;
+        id value=[NSJSONSerialization JSONObjectWithData:[line dataUsingEncoding:NSUTF8StringEncoding]
+            options:0 error:nil];
+        if ([value isKindOfClass:NSDictionary.class]) [newestFirst addObject:value];
+    }
+    return newestFirst.reverseObjectEnumerator.allObjects;
+}
 
 @implementation K7Diagnostics {
     unsigned long long _sequence;
@@ -79,20 +119,17 @@ static const unsigned long long K7DiagnosticsMaximumBytes=2*1024*1024;
 - (NSArray<NSDictionary *> *)recentEntries:(NSUInteger)limit {
     limit=MAX(1,MIN(limit,500));
     @synchronized(self) {
-        NSMutableArray<NSDictionary *> *entries=[NSMutableArray array];
-        for (NSString *path in @[[self.path stringByAppendingString:@".1"],self.path]) {
-            NSData *data=[NSData dataWithContentsOfFile:path];
-            if (!data.length) continue;
-            NSString *text=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-            for (NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
-                if (!line.length) continue;
-                id value=[NSJSONSerialization JSONObjectWithData:[line dataUsingEncoding:NSUTF8StringEncoding]
-                    options:0 error:nil];
-                if ([value isKindOfClass:NSDictionary.class]) [entries addObject:value];
-            }
-        }
-        if (entries.count<=limit) return entries;
-        return [entries subarrayWithRange:NSMakeRange(entries.count-limit,limit)];
+        NSArray<NSDictionary *> *current=K7ReadRecentEntries(self.path,limit);
+        if (current.count>=limit) return current;
+
+        NSUInteger remaining=limit-current.count;
+        NSArray<NSDictionary *> *previous=K7ReadRecentEntries(
+            [self.path stringByAppendingString:@".1"],remaining);
+        if (!previous.count) return current;
+        NSMutableArray<NSDictionary *> *combined=[NSMutableArray arrayWithCapacity:previous.count+current.count];
+        [combined addObjectsFromArray:previous];
+        [combined addObjectsFromArray:current];
+        return combined;
     }
 }
 @end

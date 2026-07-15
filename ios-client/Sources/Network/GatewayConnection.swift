@@ -1,5 +1,6 @@
 import CryptoKit
 import Combine
+import Darwin
 @preconcurrency import Foundation
 import Security
 
@@ -24,13 +25,19 @@ final class GatewayConnection: NSObject, ObservableObject {
     private var pin = ""
     private var pairing: PairingMaterial?
     private var manualDisconnect = false
+    private let hotspotHost = "172.20.10.1"
+    private var endpointHosts: [String] = []
+    private var endpointIndex = 0
+    private var activeHost: String?
 
     func connect(_ pairing: PairingMaterial) {
-        if let current = self.pairing,
-           current.document.gatewayId == pairing.document.gatewayId,
-           current.document.host == pairing.document.host,
-           current.document.port == pairing.document.port,
-           current.clientPublicKey == pairing.clientPublicKey,
+        let configurationChanged = self.pairing.map {
+            $0.document.gatewayId != pairing.document.gatewayId ||
+            $0.document.host != pairing.document.host ||
+            $0.document.port != pairing.document.port ||
+            $0.clientPublicKey != pairing.clientPublicKey
+        } ?? true
+        if !configurationChanged,
            (phase == .connecting || phase == .authenticating || phase == .online) {
             diagnostic("connect_ignored", fields: ["reason": "attempt_already_active"])
             return
@@ -40,17 +47,23 @@ final class GatewayConnection: NSObject, ObservableObject {
         manualDisconnect = false
 
         self.pairing = pairing
+        if configurationChanged || endpointHosts.isEmpty {
+            endpointHosts = candidateHosts(for: pairing)
+            endpointIndex = 0
+        }
+        let host = endpointHosts[endpointIndex]
+        activeHost = host
         pin = pairing.document.certificateSHA256.lowercased()
         sequence = 0
         lastIncomingSequence = 0
         lastError = nil
         phase = .connecting
-        diagnostic("connect_started", fields: ["host": pairing.document.host,
+        diagnostic("connect_started", fields: ["host": host,
                                                 "port": String(pairing.document.port)])
 
         var components = URLComponents()
         components.scheme = "wss"
-        components.host = pairing.document.host
+        components.host = host
         components.port = Int(pairing.document.port)
         components.path = "/v1/control"
         guard let url = components.url else {
@@ -61,7 +74,7 @@ final class GatewayConnection: NSObject, ObservableObject {
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 12
-        configuration.waitsForConnectivity = true
+        configuration.waitsForConnectivity = false
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         let socket = session!.webSocketTask(with: url)
         task = socket
@@ -71,12 +84,21 @@ final class GatewayConnection: NSObject, ObservableObject {
 
     func reconnect() {
         guard let pairing else { phase = .unpaired; return }
+        manualDisconnect = true
+        closeTransport()
+        manualDisconnect = false
+        endpointHosts = candidateHosts(for: pairing)
+        endpointIndex = 0
+        phase = .reconnecting
         connect(pairing)
     }
 
     func forget() {
         manualDisconnect = true
         pairing = nil
+        endpointHosts = []
+        endpointIndex = 0
+        activeHost = nil
         closeTransport()
         lastError = nil
         phase = .unpaired
@@ -215,6 +237,12 @@ final class GatewayConnection: NSObject, ObservableObject {
         lastError = error.localizedDescription
         diagnostic("transport_failed", level: "error", fields: ["error": error.localizedDescription])
         guard pairing != nil else { phase = .unpaired; return }
+        if endpointHosts.count > 1 {
+            let previous = activeHost ?? endpointHosts[endpointIndex]
+            endpointIndex = (endpointIndex + 1) % endpointHosts.count
+            let next = endpointHosts[endpointIndex]
+            diagnostic("endpoint_fallback", level: "warning", fields: ["from": previous, "to": next])
+        }
         phase = .reconnecting
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
@@ -222,6 +250,29 @@ final class GatewayConnection: NSObject, ObservableObject {
             guard !Task.isCancelled, let self, let pairing = self.pairing else { return }
             self.connect(pairing)
         }
+    }
+
+    private func candidateHosts(for pairing: PairingMaterial) -> [String] {
+        let saved = pairing.document.host
+        guard saved != hotspotHost else { return [hotspotHost] }
+        return isOnGatewayHotspot() ? [hotspotHost, saved] : [saved, hotspotHost]
+    }
+
+    private func isOnGatewayHotspot() -> Bool {
+        var addresses: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&addresses) == 0, let first = addresses else { return false }
+        defer { freeifaddrs(addresses) }
+
+        for pointer in Swift.sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let interface = pointer.pointee
+            guard let address = interface.ifa_addr,
+                  address.pointee.sa_family == UInt8(AF_INET) else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let result = getnameinfo(address, socklen_t(MemoryLayout<sockaddr_in>.size),
+                                     &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+            if result == 0, String(cString: host).hasPrefix("172.20.10.") { return true }
+        }
+        return false
     }
 
     private func fail(_ error: Error) {

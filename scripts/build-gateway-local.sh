@@ -13,6 +13,7 @@ rsync -a --delete --exclude .git --exclude outputs "$source_root/" "$build_root/
 find "$build_root" -type d -exec chmod 0755 {} +
 find "$build_root" -type f -exec chmod 0644 {} +
 chmod 0755 "$build_root/gateway/layout/DEBIAN/postinst"
+chmod 0755 "$build_root/gateway/layout/usr/local/bin/k7-audio-probe-session"
 
 short_sha=${git_sha:0:7}
 build_number=$(date -u +%Y%m%d%H%M%S)

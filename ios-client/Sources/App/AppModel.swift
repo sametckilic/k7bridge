@@ -63,7 +63,6 @@ final class AppModel: ObservableObject {
                 self.errorMessage = "Eşleştirme doğrulandı ancak kaydedilemedi: \(error.localizedDescription)"
             }
             self.refreshAll()
-            self.refreshDiagnostics()
         }
         connection.onProtocolError = { [weak self] message in self?.errorMessage = message }
         calls.command = { [weak self] type, command in self?.connection.send(type: type, payload: command) }

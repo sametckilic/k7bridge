@@ -1,6 +1,6 @@
 name: CI
 on:
-  push:
+  workflow_dispatch:
   pull_request:
 
 jobs:
@@ -31,8 +31,8 @@ jobs:
         run: |
           app="$RUNNER_TEMP/K7CIDerivedData/Build/Products/Debug-iphonesimulator/K7Bridge.app"
           info="$app/Info.plist"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")" = "0.3.4"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")" = "10"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")" = "0.3.5"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$info")" = "11"
           /usr/libexec/PlistBuddy -c 'Print :UILaunchScreen' "$info" >/dev/null
           /usr/libexec/PlistBuddy -c 'Print :NSContactsUsageDescription' "$info" >/dev/null
           test -f "$app/Assets.car"

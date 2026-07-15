@@ -1,8 +1,15 @@
 #!/bin/sh
 
 if [ "$1" = "configure" ]; then
+    mkdir -p /var/mobile/Library/K7Bridge
     mkdir -p /var/mobile/Library/Logs/K7Bridge
     chmod 755 /var/mobile/Library/Logs/K7Bridge 2>/dev/null || true
+    printf '{"expiresAt":0}\n' > /var/mobile/Library/K7Bridge/audio-probe-session.json
+    touch /var/mobile/Library/K7Bridge/audio-probe-result.jsonl
+    chown mobile:mobile /var/mobile/Library/K7Bridge/audio-probe-session.json \
+        /var/mobile/Library/K7Bridge/audio-probe-result.jsonl 2>/dev/null || true
+    chmod 600 /var/mobile/Library/K7Bridge/audio-probe-session.json \
+        /var/mobile/Library/K7Bridge/audio-probe-result.jsonl 2>/dev/null || true
 
     # Fully unload the previous listener before starting the replacement. A direct
     # kickstart can race the old process and leave the new daemon without port 7443.

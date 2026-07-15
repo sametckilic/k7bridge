@@ -2,199 +2,208 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <atomic>
 #import <math.h>
-#import "../Shared/BridgeIPC.h"
 
 static NSString *const K7AudioGatePath=@"/var/mobile/Library/K7Bridge/audio-gate.json";
 static NSString *const K7AudioProbeFlagPath=@"/var/mobile/Library/K7Bridge/audio-probe.enabled";
-static NSString *const K7AudioProbeSessionFlagPath=@"/var/mobile/Library/K7Bridge/audio-probe-session.enabled";
-static NSString *const K7AudioCallbackProbeFlagPath=@"/var/mobile/Library/K7Bridge/audio-callback-probe.enabled";
-static const unsigned int K7AudioProbeSlotCount=32;
+static NSString *const K7AudioProbeSessionPath=@"/var/mobile/Library/K7Bridge/audio-probe-session.json";
+static NSString *const K7AudioProbeResultPath=@"/var/mobile/Library/K7Bridge/audio-probe-result.jsonl";
+static const unsigned int K7AudioFormatSlotCount=4096;
+static const unsigned long long K7AudioProbeMaximumBytes=64*1024;
 
 typedef struct {
     std::atomic<uintptr_t> unit;
-    std::atomic<uint32_t> bus;
-    std::atomic<uint32_t> path;
-    std::atomic<uint64_t> calls;
-    std::atomic<uint32_t> frames;
-    std::atomic<uint32_t> buffers;
-    std::atomic<uint32_t> bytes;
-    std::atomic<uint32_t> floatPeakPPM;
-    std::atomic<uint32_t> int16PeakPPM;
-} K7AudioProbeSlot;
+    std::atomic<uint32_t> float16KMask;
+} K7AudioFormatSlot;
 
-static K7AudioProbeSlot K7AudioProbeSlots[K7AudioProbeSlotCount];
-static BOOL K7AudioProbeEnabled=NO;
-static BOOL K7AudioCallbackProbeEnabled=NO;
+static K7AudioFormatSlot K7AudioFormatSlots[K7AudioFormatSlotCount];
+static std::atomic<bool> K7AudioProbeActive;
+static std::atomic<uint64_t> K7AudioProbeDeadline;
+static std::atomic<uintptr_t> K7ToneUnit;
+static std::atomic<uint32_t> K7ToneBus{UINT32_MAX};
+static std::atomic<uint32_t> K7ToneBufferCount;
+static std::atomic<uint64_t> K7ToneSamples;
+static std::atomic<uint32_t> K7ToneNotice;
 static dispatch_source_t K7AudioProbeTimer;
 static dispatch_queue_t K7AudioProbeQueue;
 
-static void K7AtomicMaximum(std::atomic<uint32_t> &target,uint32_t value) {
-    uint32_t current=target.load(std::memory_order_relaxed);
-    while (current<value && !target.compare_exchange_weak(current,value,std::memory_order_relaxed)) {}
+static unsigned int K7AudioFormatSlotIndex(uintptr_t raw) {
+    raw^=raw>>17;
+    raw*=0xed5ad4bbU;
+    raw^=raw>>11;
+    return (unsigned int)(raw&(K7AudioFormatSlotCount-1));
 }
 
-static void K7RecordRender(AudioUnit unit,UInt32 bus,UInt32 path,UInt32 frames,AudioBufferList *data) {
+static BOOL K7UnitHasFloat16KFormat(AudioUnit unit) {
     uintptr_t raw=(uintptr_t)unit;
-    unsigned int empty=K7AudioProbeSlotCount;
-    for (unsigned int index=0;index<K7AudioProbeSlotCount;index++) {
-        uintptr_t current=K7AudioProbeSlots[index].unit.load(std::memory_order_relaxed);
-        if (current==raw && K7AudioProbeSlots[index].bus.load(std::memory_order_relaxed)==bus &&
-            K7AudioProbeSlots[index].path.load(std::memory_order_relaxed)==path) {
-            K7AudioProbeSlots[index].calls.fetch_add(1,std::memory_order_relaxed);
-            K7AudioProbeSlots[index].frames.store(frames,std::memory_order_relaxed);
-            if (data) {
-                K7AudioProbeSlots[index].buffers.store(data->mNumberBuffers,std::memory_order_relaxed);
-                uint32_t bytes=0;
-                uint32_t floatPeak=0,int16Peak=0;
-                for (UInt32 item=0;item<data->mNumberBuffers;item++) {
-                    AudioBuffer buffer=data->mBuffers[item];
-                    bytes+=buffer.mDataByteSize;
-                    if (!buffer.mData) continue;
-                    const float *floats=(const float *)buffer.mData;
-                    size_t floatCount=buffer.mDataByteSize/sizeof(float);
-                    BOOL floatValid=floatCount>0;
-                    for (size_t sample=0;sample<floatCount;sample++) {
-                        float absolute=fabsf(floats[sample]);
-                        if (!isfinite(absolute) || absolute>16.0f) { floatValid=NO; break; }
-                        floatPeak=MAX(floatPeak,(uint32_t)MIN(1000000.0f,absolute*1000000.0f));
-                    }
-                    if (!floatValid) floatPeak=0;
-                    const int16_t *integers=(const int16_t *)buffer.mData;
-                    size_t integerCount=buffer.mDataByteSize/sizeof(int16_t);
-                    for (size_t sample=0;sample<integerCount;sample++) {
-                        uint32_t absolute=integers[sample]==INT16_MIN?32768:(uint32_t)abs(integers[sample]);
-                        int16Peak=MAX(int16Peak,(uint32_t)MIN(1000000ULL,(uint64_t)absolute*1000000ULL/32768ULL));
-                    }
-                }
-                K7AudioProbeSlots[index].bytes.store(bytes,std::memory_order_relaxed);
-                K7AtomicMaximum(K7AudioProbeSlots[index].floatPeakPPM,floatPeak);
-                K7AtomicMaximum(K7AudioProbeSlots[index].int16PeakPPM,int16Peak);
-            }
-            return;
-        }
-        if (!current && empty==K7AudioProbeSlotCount) empty=index;
+    unsigned int start=K7AudioFormatSlotIndex(raw);
+    for (unsigned int offset=0;offset<K7AudioFormatSlotCount;offset++) {
+        unsigned int index=(start+offset)&(K7AudioFormatSlotCount-1);
+        uintptr_t current=K7AudioFormatSlots[index].unit.load(std::memory_order_relaxed);
+        if (current==raw)
+            return K7AudioFormatSlots[index].float16KMask.load(std::memory_order_relaxed)!=0;
+        if (!current) return NO;
     }
-    if (empty<K7AudioProbeSlotCount) {
-        uintptr_t expected=0;
-        if (K7AudioProbeSlots[empty].unit.compare_exchange_strong(expected,raw,std::memory_order_relaxed)) {
-            K7AudioProbeSlots[empty].bus.store(bus,std::memory_order_relaxed);
-            K7AudioProbeSlots[empty].path.store(path,std::memory_order_relaxed);
-            K7AudioProbeSlots[empty].calls.store(1,std::memory_order_relaxed);
-            K7AudioProbeSlots[empty].frames.store(frames,std::memory_order_relaxed);
+    return NO;
+}
+
+static void K7RememberStreamFormat(AudioUnit unit,AudioUnitScope scope,AudioUnitElement element,
+    const AudioStreamBasicDescription &format) {
+    if (!K7AudioProbeActive.load(std::memory_order_relaxed) || scope>=4 || element>=8) return;
+    BOOL matches=format.mFormatID==kAudioFormatLinearPCM &&
+        (format.mFormatFlags&kAudioFormatFlagIsFloat)!=0 &&
+        llround(format.mSampleRate)==16000 && format.mChannelsPerFrame>=1 &&
+        format.mChannelsPerFrame<=2 && format.mBitsPerChannel==32 &&
+        format.mBytesPerFrame==sizeof(float);
+    uintptr_t raw=(uintptr_t)unit;
+    unsigned int start=K7AudioFormatSlotIndex(raw);
+    K7AudioFormatSlot *slot=NULL;
+    for (unsigned int offset=0;offset<K7AudioFormatSlotCount;offset++) {
+        unsigned int index=(start+offset)&(K7AudioFormatSlotCount-1);
+        uintptr_t current=K7AudioFormatSlots[index].unit.load(std::memory_order_relaxed);
+        if (current==raw) { slot=&K7AudioFormatSlots[index]; break; }
+        if (!current) {
+            if (!matches) return;
+            uintptr_t expected=0;
+            if (K7AudioFormatSlots[index].unit.compare_exchange_strong(expected,raw,
+                std::memory_order_relaxed)) { slot=&K7AudioFormatSlots[index]; break; }
+            if (expected==raw) { slot=&K7AudioFormatSlots[index]; break; }
         }
     }
+    if (!slot) return;
+    uint32_t bit=1u<<((uint32_t)scope*8u+(uint32_t)element);
+    if (matches) slot->float16KMask.fetch_or(bit,std::memory_order_relaxed);
+    else slot->float16KMask.fetch_and(~bit,std::memory_order_relaxed);
 }
 
-static void K7EmitProbeSnapshot(void) {
-    for (unsigned int index=0;index<K7AudioProbeSlotCount;index++) {
-        uintptr_t unit=K7AudioProbeSlots[index].unit.load(std::memory_order_relaxed);
-        uint64_t calls=K7AudioProbeSlots[index].calls.exchange(0,std::memory_order_relaxed);
-        if (!unit || !calls) continue;
-        uint32_t floatPeak=K7AudioProbeSlots[index].floatPeakPPM.exchange(0,std::memory_order_relaxed);
-        uint32_t int16Peak=K7AudioProbeSlots[index].int16PeakPPM.exchange(0,std::memory_order_relaxed);
-        NSDictionary *fields=@{
-            @"slot":@(index).stringValue,
-            @"unit":[NSString stringWithFormat:@"0x%llx",(unsigned long long)unit],
-            @"bus":@(K7AudioProbeSlots[index].bus.load(std::memory_order_relaxed)).stringValue,
-            @"path":K7AudioProbeSlots[index].path.load(std::memory_order_relaxed)==2?@"callback":@"render",
-            @"calls":@(calls).stringValue,
-            @"frames":@(K7AudioProbeSlots[index].frames.load(std::memory_order_relaxed)).stringValue,
-            @"buffers":@(K7AudioProbeSlots[index].buffers.load(std::memory_order_relaxed)).stringValue,
-            @"bytes":@(K7AudioProbeSlots[index].bytes.load(std::memory_order_relaxed)).stringValue,
-            @"floatPeakPPM":@(floatPeak).stringValue,
-            @"int16PeakPPM":@(int16Peak).stringValue
-        };
-        [K7BridgeIPC send:@{@"type":@"diagnostic",@"component":@"audio-probe",
-            @"event":@"render_activity",@"level":@"info",@"fields":fields}
-            toPort:@"com.k7bridge.gateway" timeout:0.2];
+static void K7ApplyTestTone(AudioUnit unit,UInt32 bus,UInt32 frames,AudioBufferList *data) {
+    if (!K7AudioProbeActive.load(std::memory_order_relaxed) ||
+        !K7UnitHasFloat16KFormat(unit) || !data || data->mNumberBuffers<1 ||
+        data->mNumberBuffers>2) return;
+    uintptr_t selected=K7ToneUnit.load(std::memory_order_relaxed);
+    uint32_t selectedBus=K7ToneBus.load(std::memory_order_relaxed);
+    uintptr_t raw=(uintptr_t)unit;
+    if ((selected && selected!=raw) || (selectedBus!=UINT32_MAX && selectedBus!=bus)) return;
+
+    float peak=0.0f;
+    for (UInt32 item=0;item<data->mNumberBuffers;item++) {
+        AudioBuffer buffer=data->mBuffers[item];
+        if (!buffer.mData || buffer.mDataByteSize!=frames*sizeof(float)) return;
+        const float *samples=(const float *)buffer.mData;
+        for (UInt32 index=0;index<frames;index++) {
+            float absolute=fabsf(samples[index]);
+            if (!isfinite(absolute) || absolute>16.0f) return;
+            peak=MAX(peak,absolute);
+        }
+    }
+    if (!selected && peak<0.00001f) return;
+
+    uintptr_t expected=0;
+    if (K7ToneUnit.compare_exchange_strong(expected,raw,std::memory_order_relaxed))
+        K7ToneNotice.store(1,std::memory_order_relaxed);
+    if (K7ToneUnit.load(std::memory_order_relaxed)!=raw) return;
+    uint32_t expectedBus=UINT32_MAX;
+    K7ToneBus.compare_exchange_strong(expectedBus,bus,std::memory_order_relaxed);
+    if (K7ToneBus.load(std::memory_order_relaxed)!=bus) return;
+    K7ToneBufferCount.store(data->mNumberBuffers,std::memory_order_relaxed);
+
+    uint64_t firstSample=K7ToneSamples.fetch_add(frames,std::memory_order_relaxed);
+    const uint64_t toneStart=16000,toneEnd=32000;
+    if (firstSample>=toneEnd || firstSample+(uint64_t)frames<=toneStart) return;
+    UInt32 begin=firstSample<toneStart?(UInt32)(toneStart-firstSample):0;
+    UInt32 end=(UInt32)MIN((uint64_t)frames,toneEnd-firstSample);
+    for (UInt32 item=0;item<data->mNumberBuffers;item++) {
+        float *samples=(float *)data->mBuffers[item].mData;
+        for (UInt32 index=begin;index<end;index++) {
+            uint64_t toneSample=firstSample+(uint64_t)index-toneStart;
+            samples[index]=0.08f*sinf(2.0f*(float)M_PI*440.0f*(float)toneSample/16000.0f);
+        }
+    }
+    if (firstSample<=toneStart && firstSample+(uint64_t)frames>toneStart)
+        K7ToneNotice.store(2,std::memory_order_relaxed);
+    if (firstSample<toneEnd && firstSample+(uint64_t)frames>=toneEnd)
+        K7ToneNotice.store(3,std::memory_order_relaxed);
+}
+
+static void K7WriteAudioEvent(NSString *event) { @autoreleasepool {
+    if (!event.length) return;
+    NSNumber *size=[[[NSFileManager defaultManager] attributesOfItemAtPath:K7AudioProbeResultPath
+        error:nil] objectForKey:NSFileSize];
+    if (size.unsignedLongLongValue>K7AudioProbeMaximumBytes)
+        [[NSData data] writeToFile:K7AudioProbeResultPath atomically:YES];
+    NSDictionary *entry=@{
+        @"timestamp":@([[NSDate date] timeIntervalSince1970]),
+        @"event":event,
+        @"unit":[NSString stringWithFormat:@"0x%llx",(unsigned long long)K7ToneUnit.load()],
+        @"bus":@(K7ToneBus.load()),
+        @"buffers":@(K7ToneBufferCount.load()),
+        @"samples":@(K7ToneSamples.load())
+    };
+    NSData *json=[NSJSONSerialization dataWithJSONObject:entry options:NSJSONWritingSortedKeys error:nil];
+    if (!json) return;
+    NSMutableData *line=[json mutableCopy];
+    [line appendBytes:"\n" length:1];
+    NSFileHandle *handle=[NSFileHandle fileHandleForWritingAtPath:K7AudioProbeResultPath];
+    [handle seekToEndOfFile];
+    [handle writeData:line];
+    [handle closeFile];
+} }
+
+static void K7AudioProbeTick(void) {
+    uint32_t notice=K7ToneNotice.exchange(0,std::memory_order_relaxed);
+    if (notice==1) K7WriteAudioEvent(@"candidate_selected");
+    else if (notice==2) K7WriteAudioEvent(@"tone_started");
+    else if (notice==3) K7WriteAudioEvent(@"tone_completed");
+    uint64_t now=(uint64_t)[[NSDate date] timeIntervalSince1970];
+    if (K7AudioProbeActive.load(std::memory_order_relaxed) &&
+        now>=K7AudioProbeDeadline.load(std::memory_order_relaxed)) {
+        K7AudioProbeActive.store(false,std::memory_order_relaxed);
+        K7WriteAudioEvent(@"session_expired");
+        dispatch_source_cancel(K7AudioProbeTimer);
     }
 }
 
-%group K7AudioDiscovery
-typedef struct {
-    AURenderCallback callback;
-    void *reference;
-    AudioUnit unit;
-} K7AudioCallbackContext;
-
-static OSStatus K7AudioProbeCallback(void *reference,AudioUnitRenderActionFlags *flags,
-    const AudioTimeStamp *timestamp,UInt32 bus,UInt32 frames,AudioBufferList *data) {
-    K7AudioCallbackContext *context=(K7AudioCallbackContext *)reference;
-    OSStatus status=context->callback(context->reference,flags,timestamp,bus,frames,data);
-    if (status==noErr) K7RecordRender(context->unit,bus,2,frames,data);
-    return status;
-}
-
+%group K7BoundedAudioDiscovery
 %hookf(OSStatus,AudioUnitRender,AudioUnit unit,AudioUnitRenderActionFlags *flags,const AudioTimeStamp *timestamp,UInt32 bus,UInt32 frames,AudioBufferList *data) {
     OSStatus status=%orig;
-    if (status==noErr) K7RecordRender(unit,bus,1,frames,data);
+    if (status==noErr) K7ApplyTestTone(unit,bus,frames,data);
     return status;
 }
 
 %hookf(OSStatus,AudioUnitSetProperty,AudioUnit unit,AudioUnitPropertyID property,AudioUnitScope scope,AudioUnitElement element,const void *data,UInt32 size) {
-    if (K7AudioCallbackProbeEnabled && property==kAudioUnitProperty_SetRenderCallback && data && size>=sizeof(AURenderCallbackStruct)) {
-        const AURenderCallbackStruct *original=(const AURenderCallbackStruct *)data;
-        if (original->inputProc && original->inputProc!=K7AudioProbeCallback) {
-            K7AudioCallbackContext *context=(K7AudioCallbackContext *)calloc(1,sizeof(K7AudioCallbackContext));
-            if (context) {
-                context->callback=original->inputProc;
-                context->reference=original->inputProcRefCon;
-                context->unit=unit;
-                AURenderCallbackStruct replacement={K7AudioProbeCallback,context};
-                OSStatus replacementStatus=%orig(unit,property,scope,element,&replacement,sizeof(replacement));
-                if (replacementStatus!=noErr) free(context);
-                return replacementStatus;
-            }
-        }
-    }
     OSStatus status=%orig;
-    if (status==noErr && property==kAudioUnitProperty_StreamFormat && data && size>=sizeof(AudioStreamBasicDescription)) {
-        AudioStreamBasicDescription format=*(const AudioStreamBasicDescription *)data;
-        uintptr_t raw=(uintptr_t)unit;
-        dispatch_async(K7AudioProbeQueue,^{
-            NSDictionary *fields=@{
-                @"unit":[NSString stringWithFormat:@"0x%llx",(unsigned long long)raw],
-                @"scope":@(scope).stringValue,@"element":@(element).stringValue,
-                @"sampleRate":@((NSUInteger)llround(format.mSampleRate)).stringValue,
-                @"formatId":@(format.mFormatID).stringValue,@"formatFlags":@(format.mFormatFlags).stringValue,
-                @"bytesPerFrame":@(format.mBytesPerFrame).stringValue,
-                @"framesPerPacket":@(format.mFramesPerPacket).stringValue,
-                @"channels":@(format.mChannelsPerFrame).stringValue,@"bits":@(format.mBitsPerChannel).stringValue
-            };
-            [K7BridgeIPC send:@{@"type":@"diagnostic",@"component":@"audio-probe",
-                @"event":@"stream_format",@"level":@"info",@"fields":fields}
-                toPort:@"com.k7bridge.gateway" timeout:0.2];
-        });
-    }
+    if (status==noErr && property==kAudioUnitProperty_StreamFormat && data &&
+        size>=sizeof(AudioStreamBasicDescription))
+        K7RememberStreamFormat(unit,scope,element,*(const AudioStreamBasicDescription *)data);
     return status;
 }
 %end
 
 %ctor { @autoreleasepool {
-    K7AudioProbeEnabled=[[NSFileManager defaultManager] fileExistsAtPath:K7AudioProbeFlagPath] &&
-        [[NSFileManager defaultManager] fileExistsAtPath:K7AudioProbeSessionFlagPath];
-    K7AudioCallbackProbeEnabled=[[NSFileManager defaultManager] fileExistsAtPath:K7AudioCallbackProbeFlagPath];
-    NSData *data=[NSData dataWithContentsOfFile:K7AudioGatePath];
-    NSDictionary *gate=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
-
-    if (K7AudioProbeEnabled) {
-        K7AudioProbeQueue=dispatch_queue_create("com.k7bridge.audio-probe",DISPATCH_QUEUE_SERIAL);
-        %init(K7AudioDiscovery);
+    NSData *sessionData=[NSData dataWithContentsOfFile:K7AudioProbeSessionPath];
+    NSDictionary *session=sessionData?[NSJSONSerialization JSONObjectWithData:sessionData
+        options:0 error:nil]:nil;
+    uint64_t now=(uint64_t)[[NSDate date] timeIntervalSince1970];
+    uint64_t expires=[session[@"expiresAt"] unsignedLongLongValue];
+    BOOL baseEnabled=[[NSFileManager defaultManager] fileExistsAtPath:K7AudioProbeFlagPath];
+    BOOL sessionValid=expires>now && expires<=now+60;
+    if (baseEnabled && sessionValid) {
+        K7AudioProbeDeadline.store(expires,std::memory_order_relaxed);
+        K7AudioProbeActive.store(true,std::memory_order_relaxed);
+        K7AudioProbeQueue=dispatch_queue_create("com.k7bridge.audio-probe.bounded",DISPATCH_QUEUE_SERIAL);
+        %init(K7BoundedAudioDiscovery);
+        K7WriteAudioEvent(@"session_started");
         K7AudioProbeTimer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,K7AudioProbeQueue);
-        dispatch_source_set_timer(K7AudioProbeTimer,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),
-            2*NSEC_PER_SEC,200*NSEC_PER_MSEC);
-        dispatch_source_set_event_handler(K7AudioProbeTimer,^{ K7EmitProbeSnapshot(); });
+        dispatch_source_set_timer(K7AudioProbeTimer,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),
+            100*NSEC_PER_MSEC,20*NSEC_PER_MSEC);
+        dispatch_source_set_event_handler(K7AudioProbeTimer,^{ K7AudioProbeTick(); });
         dispatch_resume(K7AudioProbeTimer);
-        [K7BridgeIPC send:@{@"type":@"diagnostic",@"component":@"audio-probe",
-            @"event":@"probe_loaded",@"level":@"info",@"fields":@{@"bufferAccess":@"level-only"}}
-            toPort:@"com.k7bridge.gateway" timeout:0.2];
     }
 
+    NSData *gateData=[NSData dataWithContentsOfFile:K7AudioGatePath];
+    NSDictionary *gate=gateData?[NSJSONSerialization JSONObjectWithData:gateData options:0 error:nil]:nil;
     if (![gate[@"passed"] boolValue]) {
         NSLog(@"K7AudioBridge fail-closed: verified audio gate is absent");
         return;
     }
-    // A production PCM hook is installed only after the build-specific discovery
-    // report proves both directions and the gate verifies its artifact hash.
     NSLog(@"K7AudioBridge gate present, but the verified PCM hook artifact is absent");
 } }
