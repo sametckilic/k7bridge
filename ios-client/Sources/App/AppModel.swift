@@ -194,10 +194,21 @@ final class AppModel: ObservableObject {
         catch { errorMessage = error.localizedDescription }
     }
 
-    func answer(_ callID: UUID) { calls.answer(callID) }
-    func end(_ callID: UUID) { calls.end(callID) }
+    func answer(_ callID: UUID) {
+        guard call?.id == callID, call?.state == .incoming else { return }
+        calls.answer(callID)
+    }
+    func end(_ callID: UUID) {
+        guard call?.id == callID else { return }
+        if call?.state == .ended || call?.state == .failed {
+            call = nil
+            callScreenPresented = false
+            return
+        }
+        calls.end(callID)
+    }
     func toggleMicrophoneMute() {
-        guard let call else { return }
+        guard let call, call.state == .active else { return }
         calls.setMuted(!microphoneMuted, callID: call.id)
     }
     func toggleSpeaker() {
@@ -302,7 +313,7 @@ final class AppModel: ObservableObject {
                     microphoneMuted = false
                     speakerEnabled = false
                     Task { [weak self] in
-                        try? await Task.sleep(for: .seconds(2))
+                        try? await Task.sleep(for: .milliseconds(500))
                         if self?.call?.id == value.callId {
                             self?.call = nil
                             self?.callScreenPresented = false

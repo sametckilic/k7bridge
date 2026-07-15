@@ -235,23 +235,25 @@ private struct ActiveCallCard: View {
                         }
                     }
                 }
-                HStack(spacing: 14) {
-                    if call.state == .incoming {
-                        Button(role: .destructive) {
-                            model.end(call.id)
-                        } label: { Label("Reddet", systemImage: "phone.down.fill").frame(maxWidth: .infinity, minHeight: 48) }
-                        .buttonStyle(.bordered)
-                        Button {
-                            model.answer(call.id)
-                        } label: { Label("Cevapla", systemImage: "phone.fill").frame(maxWidth: .infinity, minHeight: 48) }
-                        .buttonStyle(.borderedProminent).tint(.green)
-                    } else {
-                        Button(role: .destructive) {
-                            model.end(call.id)
-                        } label: {
-                            Label("Bitir", systemImage: "phone.down.fill").frame(maxWidth: .infinity, minHeight: 48)
+                if call.state != .ended && call.state != .failed {
+                    HStack(spacing: 14) {
+                        if call.state == .incoming {
+                            Button(role: .destructive) {
+                                model.end(call.id)
+                            } label: { Label("Reddet", systemImage: "phone.down.fill").frame(maxWidth: .infinity, minHeight: 48) }
+                            .buttonStyle(.bordered)
+                            Button {
+                                model.answer(call.id)
+                            } label: { Label("Cevapla", systemImage: "phone.fill").frame(maxWidth: .infinity, minHeight: 48) }
+                            .buttonStyle(.borderedProminent).tint(.green)
+                        } else {
+                            Button(role: .destructive) {
+                                model.end(call.id)
+                            } label: {
+                                Label("Bitir", systemImage: "phone.down.fill").frame(maxWidth: .infinity, minHeight: 48)
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                 }
             }

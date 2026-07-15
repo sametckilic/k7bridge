@@ -17,6 +17,7 @@ final class CallCoordinator: NSObject, ObservableObject {
     private var incomingCallIDs: Set<UUID> = []
     private var incomingOriginIDs: Set<UUID> = []
     private var reportedCallIDs: Set<UUID> = []
+    private var pendingEndCallIDs: Set<UUID> = []
 
     override init() {
         let configuration = CXProviderConfiguration(localizedName: "K7Bridge")
@@ -69,21 +70,69 @@ final class CallCoordinator: NSObject, ObservableObject {
     }
 
     func answer(_ callID: UUID) {
-        request(CXAnswerCallAction(call: callID))
+        request(CXAnswerCallAction(call: callID), kind: "answer")
     }
 
     func end(_ callID: UUID) {
-        request(CXEndCallAction(call: callID))
+        guard reportedCallIDs.contains(callID) else {
+            diagnostic("transaction_skipped", fields: ["callId": callID.uuidString,
+                                                        "kind": "end",
+                                                        "reason": "call_not_reported"])
+            return
+        }
+        guard pendingEndCallIDs.insert(callID).inserted else {
+            diagnostic("transaction_skipped", fields: ["callId": callID.uuidString,
+                                                        "kind": "end",
+                                                        "reason": "already_pending"])
+            return
+        }
+        request(CXEndCallAction(call: callID), kind: "end")
     }
 
     func setMuted(_ muted: Bool, callID: UUID) {
-        request(CXSetMutedCallAction(call: callID, muted: muted))
+        request(CXSetMutedCallAction(call: callID, muted: muted), kind: "mute")
     }
 
-    private func request(_ action: CXAction) {
-        controller.request(CXTransaction(action: action)) { [weak self] error in
-            if let error { Task { @MainActor in self?.onError?(error) } }
+    private func request(_ action: CXCallAction, kind: String) {
+        let callID = action.callUUID
+        guard reportedCallIDs.contains(callID) else {
+            pendingEndCallIDs.remove(callID)
+            diagnostic("transaction_skipped", fields: ["callId": callID.uuidString,
+                                                        "kind": kind,
+                                                        "reason": "call_not_reported"])
+            return
         }
+        controller.request(CXTransaction(action: action)) { [weak self] error in
+            Task { @MainActor in
+                guard let self else { return }
+                if kind == "end" { self.pendingEndCallIDs.remove(callID) }
+                guard let error else { return }
+                let value = error as NSError
+                self.diagnostic("transaction_failed", level: "warning",
+                                fields: ["callId": callID.uuidString,
+                                         "kind": kind,
+                                         "domain": value.domain,
+                                         "code": String(value.code)])
+                if self.isUnknownCallUUID(error) {
+                    self.forgetCall(callID)
+                    return
+                }
+                self.onError?(error)
+            }
+        }
+    }
+
+    private func isUnknownCallUUID(_ error: Error) -> Bool {
+        let value = error as NSError
+        return value.domain == CXErrorDomainRequestTransaction &&
+            value.code == CXErrorCodeRequestTransactionError.Code.unknownCallUUID.rawValue
+    }
+
+    private func forgetCall(_ callID: UUID) {
+        incomingCallIDs.remove(callID)
+        incomingOriginIDs.remove(callID)
+        reportedCallIDs.remove(callID)
+        pendingEndCallIDs.remove(callID)
     }
 
     func reportUpdate(_ update: CallUpdatePayload) {
@@ -99,11 +148,15 @@ final class CallCoordinator: NSObject, ObservableObject {
                 provider.reportOutgoingCall(with: update.callId, connectedAt: Date())
             }
         case .ended:
-            provider.reportCall(with: update.callId, endedAt: Date(), reason: .remoteEnded)
-            incomingCallIDs.remove(update.callId); incomingOriginIDs.remove(update.callId); reportedCallIDs.remove(update.callId)
+            if reportedCallIDs.contains(update.callId) {
+                provider.reportCall(with: update.callId, endedAt: Date(), reason: .remoteEnded)
+            }
+            forgetCall(update.callId)
         case .failed:
-            provider.reportCall(with: update.callId, endedAt: Date(), reason: .failed)
-            incomingCallIDs.remove(update.callId); incomingOriginIDs.remove(update.callId); reportedCallIDs.remove(update.callId)
+            if reportedCallIDs.contains(update.callId) {
+                provider.reportCall(with: update.callId, endedAt: Date(), reason: .failed)
+            }
+            forgetCall(update.callId)
         default: break
         }
     }
@@ -131,6 +184,7 @@ extension CallCoordinator: CXProviderDelegate {
     nonisolated func providerDidReset(_ provider: CXProvider) {
         Task { @MainActor in
             incomingCallIDs.removeAll(); incomingOriginIDs.removeAll(); reportedCallIDs.removeAll()
+            pendingEndCallIDs.removeAll()
             audioSessionActive = false; audioDeactivated?()
         }
     }
@@ -146,7 +200,7 @@ extension CallCoordinator: CXProviderDelegate {
             let type = incomingCallIDs.remove(action.callUUID) != nil ? "reject" : "end"
             diagnostic("end_action", fields: ["callId": action.callUUID.uuidString, "type": type])
             command?(type, CallCommand(callId: action.callUUID)); action.fulfill()
-            reportedCallIDs.remove(action.callUUID)
+            forgetCall(action.callUUID)
         }
     }
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
